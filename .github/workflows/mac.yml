@@ -1,24 +1,47 @@
-name: mac
-on: 
+name: Build macOS Sonoma 14.8.4 ISO
+on:
   workflow_dispatch:
-defaults:
-  run:
-    shell: bash
 
 jobs:
   build:
-    runs-on: macos-latest
+    runs-on: macos‑14
     steps:
-    - uses: fastai/workflows/ssh@master
-      with:
-        ssh_key: ${{ secrets.SSH_KEY }}
-        key_file: id_ecdsa
-    - uses: actions/checkout@v2
-    - uses: conda-incubator/setup-miniconda@master
-      with:
-        python-version: 3.8
-        channels: fastchan,defaults
-        channel-priority: strict
-    - run: source script-mac.sh
-    - name: Setup tmate session
-      uses: mxschmitt/action-tmate@v2
+      - uses: actions/checkout@v4
+
+      - name: 安装mist-cli下载指定14.8.4
+        run: |
+          brew install mist
+          mist download 14.8.4 --build 23J319 --output ./Install_macOS_Sonoma.pkg
+
+      - name: 安装pkg生成App安装程序
+        run: |
+          sudo installer -pkg ./Install_macOS_Sonoma.pkg -target /
+
+      - name: 制作可引导CDR‑ISO镜像
+        run: |
+          hdiutil create -o ./sonoma_temp.cdr -size 15g -layout SPUD -fs HFS+J
+          hdiutil attach ./sonoma_temp.cdr.dmg -noverify -mountpoint /Volumes/macinst
+          sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/macinst --nointeraction
+          hdiutil detach /Volumes/macinst
+          hdiutil convert ./sonoma_temp.cdr.dmg -format UDTO -o ./macos_sonoma_1484.iso
+          mv ./macos_sonoma_1484.iso.cdr ./macos_sonoma_1484.iso
+
+      - name: 创建公开Release
+        id: new_release
+        uses: actions/create-release@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: sonoma‑1484
+          release_name: macOS Sonoma 14.8.4 ISO
+          draft: false
+          prerelease: true
+
+      - name: 上传ISO资产
+        uses: actions/upload-release-asset@v4
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: sonoma‑1484
+          asset_path: ./macos_sonoma_1484.iso
+          asset_name: macos_sonoma_1484.iso
