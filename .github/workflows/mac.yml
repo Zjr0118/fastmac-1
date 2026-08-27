@@ -48,3 +48,13 @@ jobs:
             --prerelease \
             --notes "macOS Sonoma 14.8.4 (build 23J319) bootable ISO for VirtualBox/VMware (Intel x86_64)" \
             macos_sonoma_1484.iso
+
+      - name: Output ISO download link
+        run: |
+          echo "========================================"
+          echo "✅ macOS Sonoma 14.8.4 ISO 下载直链："
+          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-1484/macos_sonoma_1484.iso"
+          echo "========================================"
+          echo "复制上面的链接，粘贴到XDown多线程下载"
+          echo "保存路径建议：D:\\iso\\macos_sonoma_1484.iso"
+          echo "========================================"
