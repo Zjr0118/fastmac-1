@@ -4,44 +4,47 @@ on:
 
 jobs:
   build:
-    runs-on: macos‑14
+    runs-on: macos-13
+    timeout-minutes: 120
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: 安装mist-cli下载指定14.8.4
+      - name: Download mist-cli
         run: |
-          brew install mist
-          mist download 14.8.4 --build 23J319 --output ./Install_macOS_Sonoma.pkg
+          curl -L https://github.com/ninxsoft/mist-cli/releases/download/v3.1.0/mist-macos-x86_64 -o mist
+          chmod +x ./mist
 
-      - name: 安装pkg生成App安装程序
+      - name: Download macOS Sonoma 14.8.4 (build 23J319)
         run: |
-          sudo installer -pkg ./Install_macOS_Sonoma.pkg -target /
+          ./mist download --version "14.8.4" --build "23J319" installer --output ./InstallAssistant.pkg
 
-      - name: 制作可引导CDR‑ISO镜像
+      - name: Expand installer package
         run: |
-          hdiutil create -o ./sonoma_temp.cdr -size 15g -layout SPUD -fs HFS+J
-          hdiutil attach ./sonoma_temp.cdr.dmg -noverify -mountpoint /Volumes/macinst
-          sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/macinst --nointeraction
-          hdiutil detach /Volumes/macinst
-          hdiutil convert ./sonoma_temp.cdr.dmg -format UDTO -o ./macos_sonoma_1484.iso
-          mv ./macos_sonoma_1484.iso.cdr ./macos_sonoma_1484.iso
+          pkgutil --expand InstallAssistant.pkg ./expanded
+          cp -r ./expanded/Payload/*.app ./
 
-      - name: 创建公开Release
-        id: new_release
-        uses: actions/create-release@v4
+      - name: Create 18GB DMG
+        run: |
+          hdiutil create -o install.dmg -size 18G -layout GPTSPUD -fs HFS+J
+          hdiutil attach install.dmg
+
+      - name: Create bootable install media
+        run: |
+          sudo ./Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
+
+      - name: Create hybrid ISO
+        run: |
+          hdiutil makehybrid -o macos_sonoma_1484.iso /Volumes/Install\ macOS\ Sonoma -hfs -joliet -iso
+          hdiutil detach /Volumes/Install\ macOS\ Sonoma
+
+      - name: Create Release and Upload ISO
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: sonoma‑1484
-          release_name: macOS Sonoma 14.8.4 ISO
-          draft: false
-          prerelease: true
-
-      - name: 上传ISO资产
-        uses: actions/upload-release-asset@v4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tag_name: sonoma‑1484
-          asset_path: ./macos_sonoma_1484.iso
-          asset_name: macos_sonoma_1484.iso
+        run: |
+          gh release create sonoma-1484 \
+            --title "Sonoma-14.8.4-ISO" \
+            --prerelease \
+            --notes "macOS Sonoma 14.8.4 (build 23J319) bootable ISO for VirtualBox/VMware (Intel x86_64)" \
+            macos_sonoma_1484.iso
