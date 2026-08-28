@@ -26,8 +26,9 @@ jobs:
 
       - name: Create hybrid ISO
         run: |
-          hdiutil makehybrid -o macos_sonoma.iso /Volumes/Install\ macOS\ Sonoma -hfs -joliet -iso
-          hdiutil detach /Volumes/Install\ macOS\ Sonoma
+          VOLUME="/Volumes/Install macOS Sonoma"
+          hdiutil makehybrid -o macos_sonoma.iso -hfs -joliet -iso "$VOLUME"
+          hdiutil detach "$VOLUME"
 
       - name: Create Release and Upload ISO
         env:
