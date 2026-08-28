@@ -1,4 +1,4 @@
-name: Build macOS Sonoma 14.8.4 ISO
+name: Build macOS Sonoma ISO
 on:
   workflow_dispatch:
 
@@ -11,9 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download macOS Sonoma 14.8.4 Installer
+      - name: Download macOS Sonoma Installer (latest 14.x)
         run: |
-          softwareupdate --fetch-full-installer --full-installer-version 14.8.4
+          softwareupdate --fetch-full-installer
 
       - name: Create 18GB DMG
         run: |
@@ -26,25 +26,25 @@ jobs:
 
       - name: Create hybrid ISO
         run: |
-          hdiutil makehybrid -o macos_sonoma_1484.iso /Volumes/Install\ macOS\ Sonoma -hfs -joliet -iso
+          hdiutil makehybrid -o macos_sonoma.iso /Volumes/Install\ macOS\ Sonoma -hfs -joliet -iso
           hdiutil detach /Volumes/Install\ macOS\ Sonoma
 
       - name: Create Release and Upload ISO
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release create sonoma-1484 \
-            --title "Sonoma-14.8.4-ISO" \
+          gh release create sonoma-latest \
+            --title "Sonoma-ISO" \
             --prerelease \
-            --notes "macOS Sonoma 14.8.4 bootable ISO for VirtualBox/VMware (Intel x86_64)" \
-            macos_sonoma_1484.iso
+            --notes "macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)" \
+            macos_sonoma.iso
 
       - name: Output ISO download link
         run: |
           echo "========================================"
-          echo "✅ macOS Sonoma 14.8.4 ISO 下载直链："
-          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-1484/macos_sonoma_1484.iso"
+          echo "✅ macOS Sonoma ISO 下载直链："
+          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-latest/macos_sonoma.iso"
           echo "========================================"
           echo "复制上面的链接，粘贴到XDown多线程下载"
-          echo "保存路径建议：D:\\iso\\macos_sonoma_1484.iso"
+          echo "保存路径建议：D:\\iso\\macos_sonoma.iso"
           echo "========================================"
