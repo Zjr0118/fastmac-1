@@ -11,19 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download mist-cli
+      - name: Download macOS Sonoma 14.8.4 Installer
         run: |
-          curl -L https://github.com/ninxsoft/mist-cli/releases/download/v3.1.0/mist-macos-x86_64 -o mist
-          chmod +x ./mist
-
-      - name: Download macOS Sonoma 14.8.4 (build 23J319)
-        run: |
-          ./mist download --version "14.8.4" --build "23J319" installer --output ./InstallAssistant.pkg
-
-      - name: Expand installer package
-        run: |
-          pkgutil --expand InstallAssistant.pkg ./expanded
-          cp -r ./expanded/Payload/*.app ./
+          softwareupdate --fetch-full-installer --full-installer-version 14.8.4
 
       - name: Create 18GB DMG
         run: |
@@ -32,7 +22,7 @@ jobs:
 
       - name: Create bootable install media
         run: |
-          sudo ./Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
+          sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
 
       - name: Create hybrid ISO
         run: |
@@ -46,7 +36,7 @@ jobs:
           gh release create sonoma-1484 \
             --title "Sonoma-14.8.4-ISO" \
             --prerelease \
-            --notes "macOS Sonoma 14.8.4 (build 23J319) bootable ISO for VirtualBox/VMware (Intel x86_64)" \
+            --notes "macOS Sonoma 14.8.4 bootable ISO for VirtualBox/VMware (Intel x86_64)" \
             macos_sonoma_1484.iso
 
       - name: Output ISO download link
