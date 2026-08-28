@@ -26,8 +26,12 @@ jobs:
 
       - name: Create ISO from DMG
         run: |
-          hdiutil detach "/Volumes/Install macOS Sonoma"
+          # 尝试卸载卷，失败也继续
+          hdiutil detach "/Volumes/Install macOS Sonoma" || true
+          sleep 2
+          # 转换 DMG 为 UDTO
           hdiutil convert install.dmg -format UDTO -o macos_sonoma
+          # 改名为 iso
           mv macos_sonoma.cdr macos_sonoma.iso
 
       - name: Create Release and Upload ISO
