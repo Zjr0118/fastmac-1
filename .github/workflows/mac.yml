@@ -24,11 +24,11 @@ jobs:
         run: |
           sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
 
-      - name: Create hybrid ISO
+      - name: Create ISO from DMG
         run: |
-          VOLUME="/Volumes/Install macOS Sonoma"
-          hdiutil makehybrid -o macos_sonoma.iso -hfs -joliet -iso "$VOLUME"
-          hdiutil detach "$VOLUME"
+          hdiutil detach "/Volumes/Install macOS Sonoma"
+          hdiutil convert install.dmg -format UDTO -o macos_sonoma
+          mv macos_sonoma.cdr macos_sonoma.iso
 
       - name: Create Release and Upload ISO
         env:
