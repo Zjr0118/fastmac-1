@@ -11,6 +11,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Free up disk space
+        run: |
+          echo "Before cleanup:"
+          df -h /
+          # 删除 Xcode（约15GB，我们不需要编译）
+          sudo rm -rf /Applications/Xcode.app || true
+          # 删除 CommandLineTools（约3GB）
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          # 清理 brew 缓存
+          brew cleanup --prune=all || true
+          # 清理用户缓存
+          rm -rf ~/Library/Caches/* || true
+          rm -rf /tmp/* || true
+          echo "After cleanup:"
+          df -h /
+
       - name: Download macOS Sonoma Installer (latest 14.x)
         run: |
           softwareupdate --fetch-full-installer
@@ -28,11 +44,8 @@ jobs:
         run: |
           # 删除安装器释放磁盘空间（约13GB）
           sudo rm -rf "/Applications/Install macOS Sonoma.app"
-          # 清理更多空间
-          brew cleanup --prune=all || true
-          rm -rf /tmp/* || true
           # 查看可用空间
-          df -h
+          df -h /
           # 卸载卷
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
           sleep 2
