@@ -13,6 +13,7 @@ jobs:
 
       - name: Download macOS Sonoma Installer via installinstallmacos.py
         run: |
+          pip3 install xattr
           curl -sL https://raw.githubusercontent.com/munki/macadmin-scripts/main/installinstallmacos.py -o installinstallmacos.py
           python3 installinstallmacos.py --workdir . --ignore-cache --minimum-os-version 14 --maximum-os-version 14.99
           # 找到生成的 dmg
