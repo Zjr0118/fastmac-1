@@ -11,26 +11,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download macOS Sonoma Installer via installinstallmacos.py
+      - name: Download macOS Sonoma Installer (latest 14.x)
         run: |
-          pip3 install --break-system-packages xattr
-          curl -sL https://raw.githubusercontent.com/munki/macadmin-scripts/main/installinstallmacos.py -o installinstallmacos.py
-          python3 installinstallmacos.py --workdir . --ignore-cache --minimum-os-version 14 --maximum-os-version 14.99
-          # 找到生成的 dmg
-          DMG=$(find . -name "Install_macOS_*.dmg" -maxdepth 2 | head -1)
-          echo "Found DMG: $DMG"
-          # 挂载 dmg
-          hdiutil attach "$DMG"
-          # 找到 .app
-          APP_PATH=$(find /Volumes -name "Install macOS*.app" -maxdepth 2 2>/dev/null | head -1)
-          echo "Found APP: $APP_PATH"
-          # 复制到 /Applications
-          cp -R "$APP_PATH" /Applications/
-          # 验证
-          ls -la /Applications/ | grep "Install macOS"
-          # 卸载 dmg
-          VOLUME=$(dirname "$APP_PATH")
-          hdiutil detach "$VOLUME"
+          softwareupdate --fetch-full-installer
 
       - name: Create 18GB DMG
         run: |
