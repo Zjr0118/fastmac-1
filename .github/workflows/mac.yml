@@ -15,9 +15,9 @@ jobs:
         run: |
           softwareupdate --fetch-full-installer
 
-      - name: Create 18GB DMG
+      - name: Create 15GB DMG
         run: |
-          hdiutil create -o install.dmg -size 18G -layout GPTSPUD -fs HFS+J
+          hdiutil create -o install.dmg -size 15G -layout GPTSPUD -fs HFS+J
           hdiutil attach install.dmg
 
       - name: Create bootable install media
@@ -26,8 +26,13 @@ jobs:
 
       - name: Create ISO from DMG
         run: |
-          # 先删除安装器释放磁盘空间（约13GB），需要sudo权限
+          # 删除安装器释放磁盘空间（约13GB）
           sudo rm -rf "/Applications/Install macOS Sonoma.app"
+          # 清理更多空间
+          brew cleanup --prune=all || true
+          rm -rf /tmp/* || true
+          # 查看可用空间
+          df -h
           # 卸载卷
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
           sleep 2
