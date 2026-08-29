@@ -1,7 +1,6 @@
 name: Build macOS Sonoma ISO
 on:
   workflow_dispatch:
-
 jobs:
   build:
     runs-on: macos-14
@@ -10,114 +9,64 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-
-      - name: Free up disk space (aggressive)
+      - name: Free up disk space
         run: |
-          echo "=== Before cleanup ==="
           df -h /
-          # 删除 Xcode（约15GB）
           sudo rm -rf /Applications/Xcode.app || true
-          # 删除 CommandLineTools（约3GB）
           sudo rm -rf /Library/Developer/CommandLineTools || true
-          # 删除系统自带应用
-          sudo rm -rf /Applications/GarageBand.app || true
-          sudo rm -rf /Applications/iMovie.app || true
-          sudo rm -rf /Applications/Keynote.app || true
-          sudo rm -rf /Applications/Pages.app || true
-          sudo rm -rf /Applications/Numbers.app || true
-          # 删除所有 brew 包（释放约5-10GB）
+          sudo rm -rf /Applications/GarageBand.app /Applications/iMovie.app /Applications/Keynote.app /Applications/Pages.app /Applications/Numbers.app || true
           brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
-          # 清理 brew 缓存
           brew cleanup --prune=all || true
-          # 删除 node_modules
-          sudo rm -rf /opt/homebrew/lib/node_modules || true
-          sudo rm -rf /usr/local/lib/node_modules || true
-          # 清理用户缓存
-          rm -rf ~/Library/Caches/* || true
-          rm -rf /tmp/* || true
-          # 清理系统日志
+          sudo rm -rf /opt/homebrew/lib/node_modules /usr/local/lib/node_modules || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
           sudo rm -rf /private/var/log/* || true
-          echo "=== After cleanup ==="
           df -h /
-
-      - name: Download macOS Sonoma Installer (latest 14.x)
-        run: |
-          softwareupdate --fetch-full-installer
-
+      - name: Download macOS Sonoma Installer
+        run: softwareupdate --fetch-full-installer
       - name: Create 15.5GB DMG
         run: |
           hdiutil create -o install.dmg -size 15.5G -layout GPTSPUD -fs HFS+J
           hdiutil attach install.dmg
-
       - name: Create bootable install media
-        run: |
-          sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
-
+        run: sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
       - name: Create ISO from DMG
         run: |
-          # 删除安装器释放磁盘空间（约13GB）
           sudo rm -rf "/Applications/Install macOS Sonoma.app"
-          # 再次清理释放空间
-          rm -rf /tmp/* || true
-          rm -rf ~/Library/Caches/* || true
-          echo "=== Before convert ==="
+          rm -rf /tmp/* ~/Library/Caches/* || true
           df -h /
-          # 卸载卷
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
           sleep 2
-          # 转换 DMG 为 UDTO (ISO格式)
           hdiutil convert install.dmg -format UDTO -o macos_sonoma
           mv macos_sonoma.cdr macos_sonoma.iso
-          echo "=== After convert ==="
-          df -h /
           ls -lh macos_sonoma.iso
-
-      - name: Split ISO into parts (GitHub Release 2GB limit)
+      - name: Split ISO into parts
         run: |
-          # 分成 1.9GB 一个分卷（小于 GitHub 2GB 限制）
           split -b 1900m macos_sonoma.iso macos_sonoma.iso.part-
           ls -lh macos_sonoma.iso.part-*
-          # 生成校验和
           md5 macos_sonoma.iso > md5.txt
-          cat md5.txt
-
-      - name: Reinstall gh and git (restore dependencies deleted during cleanup)
+      - name: Reinstall gh and git
         run: |
-          echo "Reinstalling gh and git with all dependencies..."
           brew install gh git
           gh --version
-          git --version
+      - name: Create release notes file
+        run: |
+          cat > release_notes.md << 'EOF'
+          macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)
 
-      - name: Create Release and Upload ISO parts
+          ## Windows merge
+          Download all part files, then run in CMD:
+          copy /b macos_sonoma.iso.part-aa + macos_sonoma.iso.part-ab + macos_sonoma.iso.part-ac + macos_sonoma.iso.part-ad + macos_sonoma.iso.part-ae + macos_sonoma.iso.part-af + macos_sonoma.iso.part-ag + macos_sonoma.iso.part-ah macos_sonoma.iso
+
+          ## Linux/macOS merge
+          cat macos_sonoma.iso.part-* > macos_sonoma.iso
+          EOF
+      - name: Create Release and Upload
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # 如果 release 已存在，先删除旧的
           gh release delete sonoma-latest --yes --cleanup-tag 2>/dev/null || true
-          # 创建新 release 并上传所有分卷 + 校验和
-          gh release create sonoma-latest \
-            --title "Sonoma-ISO" \
-            --prerelease \
-            --notes "macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)
-
-## 下载和合并方法（Windows）
-
-1. 下载所有 macos_sonoma.iso.part-* 文件到同一个文件夹
-2. 打开 CMD，进入该文件夹，运行：
-   copy /b macos_sonoma.iso.part-aa + macos_sonoma.iso.part-ab + macos_sonoma.iso.part-ac + macos_sonoma.iso.part-ad + macos_sonoma.iso.part-ae + macos_sonoma.iso.part-af + macos_sonoma.iso.part-ag + macos_sonoma.iso.part-ah macos_sonoma.iso
-3. 验证校验和（可选）：
-   certutil -hashfile macos_sonoma.iso MD5
-
-## 下载和合并方法（Linux/macOS）
-cat macos_sonoma.iso.part-* > macos_sonoma.iso" \
-            macos_sonoma.iso.part-* md5.txt
-
-      - name: Output ISO download link
+          gh release create sonoma-latest --title "Sonoma-ISO" --prerelease --notes-file release_notes.md macos_sonoma.iso.part-* md5.txt
+      - name: Output download link
         run: |
-          echo "========================================"
-          echo "✅ macOS Sonoma ISO 分卷下载页面："
-          echo "https://github.com/${{ github.repository }}/releases/tag/sonoma-latest"
-          echo "========================================"
-          echo "下载所有 macos_sonoma.iso.part-* 文件后合并："
-          echo "Windows: copy /b macos_sonoma.iso.part-* macos_sonoma.iso"
-          echo "========================================"
+          echo "Download page: https://github.com/${{ github.repository }}/releases/tag/sonoma-latest"
+          echo "Windows merge: copy /b macos_sonoma.iso.part-* macos_sonoma.iso"
