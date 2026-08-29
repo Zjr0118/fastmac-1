@@ -72,6 +72,15 @@ jobs:
           df -h /
           ls -lh macos_sonoma.iso
 
+      - name: Split ISO into parts (GitHub Release 2GB limit)
+        run: |
+          # 分成 1.9GB 一个分卷（小于 GitHub 2GB 限制）
+          split -b 1900m macos_sonoma.iso macos_sonoma.iso.part-
+          ls -lh macos_sonoma.iso.part-*
+          # 生成校验和
+          md5 macos_sonoma.iso > md5.txt
+          cat md5.txt
+
       - name: Reinstall gh and git (restore dependencies deleted during cleanup)
         run: |
           echo "Reinstalling gh and git with all dependencies..."
@@ -79,25 +88,36 @@ jobs:
           gh --version
           git --version
 
-      - name: Create Release and Upload ISO
+      - name: Create Release and Upload ISO parts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # 如果 release 已存在，先删除旧的
           gh release delete sonoma-latest --yes --cleanup-tag 2>/dev/null || true
-          # 创建新 release 并上传
+          # 创建新 release 并上传所有分卷 + 校验和
           gh release create sonoma-latest \
             --title "Sonoma-ISO" \
             --prerelease \
-            --notes "macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)" \
-            macos_sonoma.iso
+            --notes "macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)
+
+## 下载和合并方法（Windows）
+
+1. 下载所有 macos_sonoma.iso.part-* 文件到同一个文件夹
+2. 打开 CMD，进入该文件夹，运行：
+   copy /b macos_sonoma.iso.part-aa + macos_sonoma.iso.part-ab + macos_sonoma.iso.part-ac + macos_sonoma.iso.part-ad + macos_sonoma.iso.part-ae + macos_sonoma.iso.part-af + macos_sonoma.iso.part-ag + macos_sonoma.iso.part-ah macos_sonoma.iso
+3. 验证校验和（可选）：
+   certutil -hashfile macos_sonoma.iso MD5
+
+## 下载和合并方法（Linux/macOS）
+cat macos_sonoma.iso.part-* > macos_sonoma.iso" \
+            macos_sonoma.iso.part-* md5.txt
 
       - name: Output ISO download link
         run: |
           echo "========================================"
-          echo "✅ macOS Sonoma ISO 下载直链："
-          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-latest/macos_sonoma.iso"
+          echo "✅ macOS Sonoma ISO 分卷下载页面："
+          echo "https://github.com/${{ github.repository }}/releases/tag/sonoma-latest"
           echo "========================================"
-          echo "复制上面的链接，粘贴到XDown多线程下载"
-          echo "保存路径建议：D:\\iso\\macos_sonoma.iso"
+          echo "下载所有 macos_sonoma.iso.part-* 文件后合并："
+          echo "Windows: copy /b macos_sonoma.iso.part-* macos_sonoma.iso"
           echo "========================================"
