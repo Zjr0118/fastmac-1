@@ -41,9 +41,19 @@ jobs:
           ls -lh macos_sonoma.iso
       - name: Split ISO into parts
         run: |
-          split -b 1900m macos_sonoma.iso macos_sonoma.iso.part-
-          ls -lh macos_sonoma.iso.part-*
+          # 删除 DMG 释放空间（约14GB）
+          rm -f install.dmg
+          # 再次清理
+          rm -rf /tmp/* ~/Library/Caches/* || true
+          df -h /
+          # 生成校验和
           md5 macos_sonoma.iso > md5.txt
+          # 分卷（1.9GB一个，小于GitHub 2GB限制）
+          split -b 1900m macos_sonoma.iso macos_sonoma.iso.part-
+          # 分卷完成后删除原始 ISO，只保留分卷
+          rm -f macos_sonoma.iso
+          ls -lh macos_sonoma.iso.part-*
+          df -h /
       - name: Reinstall gh and git
         run: |
           brew install gh git
