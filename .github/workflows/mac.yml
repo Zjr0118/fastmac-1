@@ -11,69 +11,83 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Free up disk space
+      - name: Free up disk space (aggressive)
         run: |
-          echo "Before cleanup:"
+          echo "=== Before cleanup ==="
           df -h /
-          # 删除 Xcode（约15GB，我们不需要编译）
+          # 删除 Xcode（约15GB）
           sudo rm -rf /Applications/Xcode.app || true
           # 删除 CommandLineTools（约3GB）
           sudo rm -rf /Library/Developer/CommandLineTools || true
+          # 删除系统自带应用
+          sudo rm -rf /Applications/GarageBand.app || true
+          sudo rm -rf /Applications/iMovie.app || true
+          sudo rm -rf /Applications/Keynote.app || true
+          sudo rm -rf /Applications/Pages.app || true
+          sudo rm -rf /Applications/Numbers.app || true
+          # 删除所有 brew 包（释放约5-10GB）
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
           # 清理 brew 缓存
           brew cleanup --prune=all || true
+          # 删除 node_modules
+          sudo rm -rf /opt/homebrew/lib/node_modules || true
+          sudo rm -rf /usr/local/lib/node_modules || true
           # 清理用户缓存
           rm -rf ~/Library/Caches/* || true
           rm -rf /tmp/* || true
-          echo "After cleanup:"
+          # 清理系统日志
+          sudo rm -rf /private/var/log/* || true
+          echo "=== After cleanup ==="
           df -h /
 
       - name: Download macOS Sonoma Installer (latest 14.x)
         run: |
           softwareupdate --fetch-full-installer
 
-      - name: Create 16GB DMG
+      - name: Create 15.5GB DMG
         run: |
-          hdiutil create -o install.dmg -size 16G -layout GPTSPUD -fs HFS+J
+          hdiutil create -o install.dmg -size 15.5G -layout GPTSPUD -fs HFS+J
           hdiutil attach install.dmg
 
       - name: Create bootable install media
         run: |
           sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
 
-      - name: Prepare DMG for upload
+      - name: Create ISO from DMG
         run: |
+          # 删除安装器释放磁盘空间（约13GB）
+          sudo rm -rf "/Applications/Install macOS Sonoma.app"
+          # 再次清理释放空间
+          rm -rf /tmp/* || true
+          rm -rf ~/Library/Caches/* || true
+          echo "=== Before convert ==="
+          df -h /
           # 卸载卷
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
           sleep 2
-          # 重命名 DMG
-          mv install.dmg macos_sonoma.dmg
-          ls -lh macos_sonoma.dmg
+          # 转换 DMG 为 UDTO (ISO格式)
+          hdiutil convert install.dmg -format UDTO -o macos_sonoma
+          mv macos_sonoma.cdr macos_sonoma.iso
+          echo "=== After convert ==="
           df -h /
+          ls -lh macos_sonoma.iso
 
-      - name: Create Release and Upload DMG
+      - name: Create Release and Upload ISO
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create sonoma-latest \
             --title "Sonoma-ISO" \
             --prerelease \
-            --notes "macOS Sonoma bootable DMG for VirtualBox/VMware.
+            --notes "macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)" \
+            macos_sonoma.iso
 
-## 如何使用（Windows 用户）
-
-1. 下载 macos_sonoma.dmg
-2. 下载 dmg2img 工具：http://vu1tur.eu.org/tools/dmg2img-1.6.7-win32.zip
-3. 解压后运行：
-   dmg2img.exe macos_sonoma.dmg macos_sonoma.iso
-4. 在 VirtualBox 中使用生成的 macos_sonoma.iso 作为光盘启动" \
-            macos_sonoma.dmg
-
-      - name: Output DMG download link
+      - name: Output ISO download link
         run: |
           echo "========================================"
-          echo "✅ macOS Sonoma DMG 下载直链："
-          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-latest/macos_sonoma.dmg"
+          echo "✅ macOS Sonoma ISO 下载直链："
+          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-latest/macos_sonoma.iso"
           echo "========================================"
-          echo "下载后用 dmg2img 转成 ISO："
-          echo "dmg2img.exe macos_sonoma.dmg macos_sonoma.iso"
+          echo "复制上面的链接，粘贴到XDown多线程下载"
+          echo "保存路径建议：D:\\iso\\macos_sonoma.iso"
           echo "========================================"
