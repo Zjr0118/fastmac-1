@@ -40,35 +40,40 @@ jobs:
         run: |
           sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
 
-      - name: Create ISO from DMG
+      - name: Prepare DMG for upload
         run: |
-          # 删除安装器释放磁盘空间（约13GB）
-          sudo rm -rf "/Applications/Install macOS Sonoma.app"
-          # 查看可用空间
-          df -h /
           # 卸载卷
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
           sleep 2
-          # 转换 DMG 为 UDTO
-          hdiutil convert install.dmg -format UDTO -o macos_sonoma
-          mv macos_sonoma.cdr macos_sonoma.iso
+          # 重命名 DMG
+          mv install.dmg macos_sonoma.dmg
+          ls -lh macos_sonoma.dmg
+          df -h /
 
-      - name: Create Release and Upload ISO
+      - name: Create Release and Upload DMG
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release create sonoma-latest \
             --title "Sonoma-ISO" \
             --prerelease \
-            --notes "macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)" \
-            macos_sonoma.iso
+            --notes "macOS Sonoma bootable DMG for VirtualBox/VMware.
 
-      - name: Output ISO download link
+## 如何使用（Windows 用户）
+
+1. 下载 macos_sonoma.dmg
+2. 下载 dmg2img 工具：http://vu1tur.eu.org/tools/dmg2img-1.6.7-win32.zip
+3. 解压后运行：
+   dmg2img.exe macos_sonoma.dmg macos_sonoma.iso
+4. 在 VirtualBox 中使用生成的 macos_sonoma.iso 作为光盘启动" \
+            macos_sonoma.dmg
+
+      - name: Output DMG download link
         run: |
           echo "========================================"
-          echo "✅ macOS Sonoma ISO 下载直链："
-          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-latest/macos_sonoma.iso"
+          echo "✅ macOS Sonoma DMG 下载直链："
+          echo "https://github.com/${{ github.repository }}/releases/download/sonoma-latest/macos_sonoma.dmg"
           echo "========================================"
-          echo "复制上面的链接，粘贴到XDown多线程下载"
-          echo "保存路径建议：D:\\iso\\macos_sonoma.iso"
+          echo "下载后用 dmg2img 转成 ISO："
+          echo "dmg2img.exe macos_sonoma.dmg macos_sonoma.iso"
           echo "========================================"
