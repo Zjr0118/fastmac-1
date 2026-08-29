@@ -25,8 +25,8 @@ jobs:
           sudo rm -rf /Applications/Keynote.app || true
           sudo rm -rf /Applications/Pages.app || true
           sudo rm -rf /Applications/Numbers.app || true
-          # 删除所有 brew 包（释放约5-10GB），但保留 gh 和 git
-          brew uninstall --force --ignore-dependencies $(brew list | grep -v -E '^(gh|git)$') 2>/dev/null || true
+          # 删除所有 brew 包（释放约5-10GB）
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
           # 清理 brew 缓存
           brew cleanup --prune=all || true
           # 删除 node_modules
@@ -39,7 +39,6 @@ jobs:
           sudo rm -rf /private/var/log/* || true
           echo "=== After cleanup ==="
           df -h /
-          which gh || echo "gh not found"
 
       - name: Download macOS Sonoma Installer (latest 14.x)
         run: |
@@ -73,18 +72,20 @@ jobs:
           df -h /
           ls -lh macos_sonoma.iso
 
-      - name: Ensure gh CLI is available
+      - name: Reinstall gh and git (restore dependencies deleted during cleanup)
         run: |
-          if ! command -v gh &> /dev/null; then
-            echo "gh not found, reinstalling..."
-            brew install gh
-          fi
+          echo "Reinstalling gh and git with all dependencies..."
+          brew install gh git
           gh --version
+          git --version
 
       - name: Create Release and Upload ISO
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # 如果 release 已存在，先删除旧的
+          gh release delete sonoma-latest --yes --cleanup-tag 2>/dev/null || true
+          # 创建新 release 并上传
           gh release create sonoma-latest \
             --title "Sonoma-ISO" \
             --prerelease \
