@@ -15,9 +15,9 @@ jobs:
         run: |
           softwareupdate --fetch-full-installer
 
-      - name: Create 15GB DMG
+      - name: Create 16GB DMG
         run: |
-          hdiutil create -o install.dmg -size 15G -layout GPTSPUD -fs HFS+J
+          hdiutil create -o install.dmg -size 16G -layout GPTSPUD -fs HFS+J
           hdiutil attach install.dmg
 
       - name: Create bootable install media
