@@ -26,8 +26,8 @@ jobs:
 
       - name: Create ISO from DMG
         run: |
-          # 先删除安装器释放磁盘空间（约13GB）
-          rm -rf "/Applications/Install macOS Sonoma.app"
+          # 先删除安装器释放磁盘空间（约13GB），需要sudo权限
+          sudo rm -rf "/Applications/Install macOS Sonoma.app"
           # 卸载卷
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
           sleep 2
