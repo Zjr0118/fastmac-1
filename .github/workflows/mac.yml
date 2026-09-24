@@ -70,10 +70,6 @@ jobs:
           gunzip -f OpenCore.iso.gz
           ls -lh OpenCore.iso
           md5 OpenCore.iso >> md5.txt
-      - name: Reinstall gh and git
-        run: |
-          brew install gh git
-          gh --version
       - name: Create release notes file
         run: |
           cat > release_notes.md << 'EOF'
