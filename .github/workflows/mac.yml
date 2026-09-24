@@ -116,7 +116,7 @@ jobs:
           for f in macos_sonoma.iso.part-* OpenCore.iso md5.txt; do
             echo "Uploading $f ..."
             curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" \
-              --data-binary "@$f" \
+              --upload-file "$f" \
               "$UPLOAD/releases/$RELEASE_ID/assets?name=$(basename "$f")" -o /dev/null -w "  -> HTTP %{http_code}, %{size_upload} bytes\n"
           done
       - name: Output download link
