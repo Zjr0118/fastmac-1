@@ -21,17 +21,24 @@ jobs:
           rm -rf ~/Library/Caches/* /tmp/* || true
           sudo rm -rf /private/var/log/* || true
           df -h /
-      - name: Download macOS Sonoma Installer
-        run: softwareupdate --fetch-full-installer
+      - name: Download macOS Sonoma 14.8.4 Installer
+        run: |
+          # 必须显式指定版本号，否则 softwareupdate 会下载最新版（Tahoe）而非 Sonoma
+          softwareupdate --fetch-full-installer --full-installer-version 14.8.4
+          ls -d /Applications/Install\ macOS*.app
       - name: Create 15.5GB DMG
         run: |
           hdiutil create -o install.dmg -size 15.5G -layout GPTSPUD -fs HFS+J
           hdiutil attach install.dmg
       - name: Create bootable install media
-        run: sudo /Applications/Install\ macOS\ Sonoma.app/Contents/Resources/createinstallmedia --volume /Volumes/Untitled --nointeraction
+        run: |
+          # 动态定位安装器，避免硬编码路径
+          INSTALLER_APP=$(ls -d /Applications/Install\ macOS*.app | head -1)
+          echo "Using installer: $INSTALLER_APP"
+          sudo "$INSTALLER_APP/Contents/Resources/createinstallmedia" --volume /Volumes/Untitled --nointeraction
       - name: Create ISO from DMG
         run: |
-          sudo rm -rf "/Applications/Install macOS Sonoma.app"
+          sudo rm -rf /Applications/Install\ macOS*.app
           rm -rf /tmp/* ~/Library/Caches/* || true
           df -h /
           hdiutil detach "/Volumes/Install macOS Sonoma" || true
