@@ -21,14 +21,11 @@ jobs:
           rm -rf ~/Library/Caches/* /tmp/* || true
           sudo rm -rf /private/var/log/* || true
           df -h /
-      - name: Download macOS Sonoma 14.8.4 Installer
+      - name: Download macOS Sonoma Installer
         run: |
-          # softwareupdate 已无法获取 Sonoma 14.8.4（目录下架），改用 Apple 官方 CDN 直链
-          # 来源: Mr. Macintosh Sonoma Full Installer Database (14.8.4 / 23J319)
-          curl -fL --retry 3 -o InstallAssistant.pkg "https://swcdn.apple.com/content/downloads/54/28/047-48595-A_R091M3YM05/clkilvw19hq1zy5j5jz2wnf4re6b3sksfd/InstallAssistant.pkg"
-          ls -lh InstallAssistant.pkg
-          # 安装到 /Applications，生成 "Install macOS Sonoma.app"
-          sudo installer -pkg InstallAssistant.pkg -target /
+          # GitHub runner 直连 Apple CDN 会被 403，必须走 softwareupdate 通道
+          # 目录中 Sonoma 最新可用版本为 14.8.9 (23J631)，14.8.4 已被 Apple 下架
+          softwareupdate --fetch-full-installer --full-installer-version 14.8.9
           ls -d /Applications/Install\ macOS*.app
       - name: Create 15.5GB DMG
         run: |
