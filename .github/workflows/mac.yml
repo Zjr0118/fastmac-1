@@ -68,7 +68,6 @@ jobs:
           # 下载专为虚拟机(KVM/QEMU/Proxmox/VMware)预配置的 OpenCore 引导 ISO
           curl -L -o OpenCore.iso.gz https://github.com/thenickdude/KVM-Opencore/releases/download/v21/OpenCore-v21.iso.gz
           gunzip -f OpenCore.iso.gz
-          mv -f OpenCore-v21.iso OpenCore.iso
           ls -lh OpenCore.iso
           md5 OpenCore.iso >> md5.txt
       - name: Reinstall gh and git
