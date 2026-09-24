@@ -23,8 +23,12 @@ jobs:
           df -h /
       - name: Download macOS Sonoma 14.8.4 Installer
         run: |
-          # 必须显式指定版本号，否则 softwareupdate 会下载最新版（Tahoe）而非 Sonoma
-          softwareupdate --fetch-full-installer --full-installer-version 14.8.4
+          # softwareupdate 已无法获取 Sonoma 14.8.4（目录下架），改用 Apple 官方 CDN 直链
+          # 来源: Mr. Macintosh Sonoma Full Installer Database (14.8.4 / 23J319)
+          curl -fL --retry 3 -o InstallAssistant.pkg "https://swcdn.apple.com/content/downloads/54/28/047-48595-A_R091M3YM05/clkilvw19hq1zy5j5jz2wnf4re6b3sksfd/InstallAssistant.pkg"
+          ls -lh InstallAssistant.pkg
+          # 安装到 /Applications，生成 "Install macOS Sonoma.app"
+          sudo installer -pkg InstallAssistant.pkg -target /
           ls -d /Applications/Install\ macOS*.app
       - name: Create 15.5GB DMG
         run: |
