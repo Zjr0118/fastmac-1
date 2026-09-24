@@ -96,8 +96,29 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release delete sonoma-latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create sonoma-latest --title "Sonoma-ISO + OpenCore" --prerelease --notes-file release_notes.md macos_sonoma.iso.part-* OpenCore.iso md5.txt
+          # runner 上无 gh（被 Free up disk space 的 brew uninstall 卸载且 brew 无法重装），改用 REST API
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token $GITHUB_TOKEN"
+          # 删除旧 release 和 tag（若存在）
+          OLD_ID=$(curl -s -H "$AUTH" "$API/releases/tags/sonoma-latest" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+          if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "" ]; then
+            curl -s -X DELETE -H "$AUTH" "$API/releases/$OLD_ID"
+            curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/sonoma-latest" || true
+          fi
+          # 创建 release，body 读取 release_notes.md
+          python3 -c "import json;print(json.dumps(open('release_notes.md').read()))" > /tmp/body.json
+          RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\":\"sonoma-latest\",\"name\":\"Sonoma-ISO + OpenCore\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
+            "$API/releases" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          echo "Release ID: $RELEASE_ID"
+          # 逐个上传资产（GitHub 单文件上限 2GB，分卷 1900MB 安全）
+          for f in macos_sonoma.iso.part-* OpenCore.iso md5.txt; do
+            echo "Uploading $f ..."
+            curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" \
+              --data-binary "@$f" \
+              "$UPLOAD/releases/$RELEASE_ID/assets?name=$(basename "$f")" -o /dev/null -w "  -> HTTP %{http_code}, %{size_upload} bytes\n"
+          done
       - name: Output download link
         run: |
           echo "Download page: https://github.com/${{ github.repository }}/releases/tag/sonoma-latest"
