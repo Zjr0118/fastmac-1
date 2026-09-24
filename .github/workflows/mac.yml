@@ -54,6 +54,15 @@ jobs:
           rm -f macos_sonoma.iso
           ls -lh macos_sonoma.iso.part-*
           df -h /
+      # ===== OpenCore 引导盘（新增） =====
+      - name: Download OpenCore bootloader
+        run: |
+          # 下载专为虚拟机(KVM/QEMU/Proxmox/VMware)预配置的 OpenCore 引导 ISO
+          curl -L -o OpenCore.iso.gz https://github.com/thenickdude/KVM-Opencore/releases/download/v21/OpenCore-v21.iso.gz
+          gunzip -f OpenCore.iso.gz
+          mv -f OpenCore-v21.iso OpenCore.iso
+          ls -lh OpenCore.iso
+          md5 OpenCore.iso >> md5.txt
       - name: Reinstall gh and git
         run: |
           brew install gh git
@@ -61,7 +70,11 @@ jobs:
       - name: Create release notes file
         run: |
           cat > release_notes.md << 'EOF'
-          macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64)
+          macOS Sonoma bootable ISO for VirtualBox/VMware (Intel x86_64) + OpenCore bootloader
+
+          ## Files
+          - macos_sonoma.iso.part-* : macOS Sonoma 安装镜像（分卷）
+          - OpenCore.iso            : OpenCore 引导盘（虚拟机引导用，KVM-OpenCore v21）
 
           ## Windows merge
           Download all part files, then run in CMD:
@@ -69,13 +82,19 @@ jobs:
 
           ## Linux/macOS merge
           cat macos_sonoma.iso.part-* > macos_sonoma.iso
+
+          ## How to boot in VM (Proxmox/QEMU example)
+          1. Upload both ISOs: macos_sonoma.iso and OpenCore.iso
+          2. VM settings: BIOS=OVMF(UEFI), Machine=q35
+          3. Mount two CD drives: 1st = OpenCore.iso (bootloader), 2nd = macos_sonoma.iso (installer)
+          4. Boot into OpenCore menu, select macOS installer disk
           EOF
       - name: Create Release and Upload
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release delete sonoma-latest --yes --cleanup-tag 2>/dev/null || true
-          gh release create sonoma-latest --title "Sonoma-ISO" --prerelease --notes-file release_notes.md macos_sonoma.iso.part-* md5.txt
+          gh release create sonoma-latest --title "Sonoma-ISO + OpenCore" --prerelease --notes-file release_notes.md macos_sonoma.iso.part-* OpenCore.iso md5.txt
       - name: Output download link
         run: |
           echo "Download page: https://github.com/${{ github.repository }}/releases/tag/sonoma-latest"
