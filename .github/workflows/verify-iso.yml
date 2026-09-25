@@ -1,0 +1,84 @@
+name: Verify and Repair ISO
+on:
+  workflow_dispatch:
+jobs:
+  verify:
+    runs-on: macos-14
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up disk space
+        run: |
+          df -h /
+          sudo rm -rf /Applications/Xcode.app || true
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          sudo rm -rf /Applications/GarageBand.app /Applications/iMovie.app /Applications/Keynote.app /Applications/Pages.app /Applications/Numbers.app || true
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
+          df -h /
+      - name: Download parts and md5 from release
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-latest"
+          for i in aa ab ac ad ae af ag ah ai; do
+            echo "Downloading part-$i ..."
+            curl -L -s -o part-$i "$BASE/macos_sonoma.iso.part-$i"
+          done
+          curl -L -s -o md5.txt "$BASE/md5.txt"
+          ls -lh part-* md5.txt
+          echo "=== md5.txt content ==="
+          cat md5.txt
+      - name: Merge parts and verify MD5
+        run: |
+          cat part-* > macos_sonoma.iso
+          rm -f part-*
+          echo "=== merged file ==="
+          ls -lh macos_sonoma.iso
+          echo "=== actual MD5 (of merged ISO) ==="
+          ACTUAL=$(md5 -q macos_sonoma.iso)
+          echo "ACTUAL   = $ACTUAL"
+          EXPECTED=$(grep 'macos_sonoma.iso' md5.txt | awk -F'= ' '{print $2}')
+          echo "EXPECTED = $EXPECTED"
+          if [ "$ACTUAL" = "$EXPECTED" ] && [ -n "$EXPECTED" ]; then
+            echo "RESULT: MD5 MATCH ✅"
+          else
+            echo "RESULT: MD5 MISMATCH ❌"
+          fi
+      - name: Attach and inspect installer volume
+        run: |
+          echo "=== attaching ISO (read-only) ==="
+          hdiutil attach macos_sonoma.iso -readonly -nobrowse || hdiutil attach macos_sonoma.iso -nobrowse
+          echo "=== attached volumes ==="
+          ls -la /Volumes/
+          VOL=$(ls -d /Volumes/Install* /Volumes/macOS* 2>/dev/null | head -1)
+          echo "VOL=$VOL"
+          if [ -n "$VOL" ] && [ -d "$VOL" ]; then
+            echo "=== installer volume content ==="
+            ls -la "$VOL" | head -40
+            echo "=== installer app check ==="
+            APP=$(ls -d "$VOL"/Install*.app "$VOL"/macOS*.app 2>/dev/null | head -1)
+            echo "APP=$APP"
+            if [ -n "$APP" ] && [ -d "$APP" ]; then
+              echo "Installer app found: $APP"
+              ls -la "$APP/Contents/Resources/" | head -20
+              test -f "$APP/Contents/Resources/InstallAssistant.pkg" -o -d "$APP/Contents/SharedSupport" && echo "SharedSupport/InstallAssistant present ✅" || echo "SharedSupport check: see listing above"
+            else
+              echo "WARNING: no Install*.app found on volume"
+              echo "=== full volume tree (top 2 levels) ==="
+              find "$VOL" -maxdepth 2 -print | head -60
+            fi
+          else
+            echo "WARNING: could not locate installer volume"
+            echo "=== all volumes ==="
+            ls -la /Volumes/
+          fi
+          # detach to free space
+          hdiutil detach "$VOL" 2>/dev/null || true
+          hdiutil detach /Volumes/Install* 2>/dev/null || true
+      - name: Final report
+        run: |
+          echo "=== disk after verification ==="
+          df -h /
+          echo "=== verification complete ==="
