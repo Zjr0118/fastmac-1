@@ -29,12 +29,14 @@ jobs:
       - name: Codesign original HFS+ (strict and non-strict)
         run: |
           APP="$OMOUNT/Install macOS Sonoma.app"
+          set +e
           echo "=== ORIGINAL: strict ==="
           codesign --verify --deep --strict "$APP"; echo "STRICT_EXIT=$?"
           echo "=== ORIGINAL: non-strict ==="
           codesign --verify --deep "$APP"; echo "NONSTRICT_EXIT=$?"
           echo "=== ORIGINAL: verbose output ==="
           codesign --verify --deep --strict --verbose=4 "$APP" 2>&1 | head -5
+          set -e
       - name: Download and attach UDF ISO
         run: |
           BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-udf"
@@ -49,12 +51,14 @@ jobs:
       - name: Codesign UDF ISO (strict and non-strict)
         run: |
           APP="$UMOUNT/Install macOS Sonoma.app"
+          set +e
           echo "=== UDF: strict ==="
           codesign --verify --deep --strict "$APP"; echo "STRICT_EXIT=$?"
           echo "=== UDF: non-strict ==="
           codesign --verify --deep "$APP"; echo "NONSTRICT_EXIT=$?"
           echo "=== UDF: verbose output ==="
           codesign --verify --deep --strict --verbose=4 "$APP" 2>&1 | head -5
+          set -e
       - name: Compare key file hashes (original vs UDF)
         run: |
           OAPP="$OMOUNT/Install macOS Sonoma.app"
