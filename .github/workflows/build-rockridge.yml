@@ -1,0 +1,134 @@
+name: Build RockRidge ISO and verify
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 180
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install xorriso
+        run: |
+          brew install xorriso 2>&1 | tail -3 || true
+          xorrisofs --version 2>&1 | head -2 || echo "xorriso not available"
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /Applications/Xcode.app || true
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          sudo rm -rf /Applications/GarageBand.app /Applications/iMovie.app || true
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
+          df -h /
+      - name: Download original parts and merge
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-latest"
+          for i in aa ab ac ad ae af ag ah ai; do
+            curl -L -s -o part-$i "$BASE/macos_sonoma.iso.part-$i"
+          done
+          cat part-* > macos_sonoma.iso
+          rm -f part-*
+          ls -lh macos_sonoma.iso
+          ACTUAL=$(md5 -q macos_sonoma.iso)
+          echo "MD5=$ACTUAL"
+          if [ "$ACTUAL" != "820c8c54a1c14385ff6fc3acb37f47e1" ]; then
+            echo "MD5 MISMATCH"
+            exit 1
+          fi
+          echo "MD5 OK"
+      - name: Attach original HFS+ volume (baseline)
+        run: |
+          hdiutil attach macos_sonoma.iso -readonly -nobrowse
+          VOL=$(ls -d /Volumes/Install* /Volumes/macOS* 2>/dev/null | head -1)
+          echo "VOL=$VOL"
+          echo "VOL=$VOL" >> $GITHUB_ENV
+      - name: Baseline stats (original HFS+)
+        run: |
+          echo "=== BASELINE HFS+ ==="
+          echo "files:    $(find "$VOL" -type f | wc -l)"
+          echo "symlinks: $(find "$VOL" -type l | wc -l)"
+          echo "xattr_files: $(find "$VOL" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
+          echo "--- sample xattr (app binary) ---"
+          BIN=$(find "$VOL" -path "*.app/Contents/MacOS/*" -type f | head -1)
+          echo "BIN=$BIN"
+          xattr -l "$BIN" 2>/dev/null | head -8 || echo "(no xattr on binary)"
+      - name: Build Rock Ridge ISO (xorrisofs -R -J)
+        run: |
+          df -h /
+          # 核心：-R 保留 POSIX uid/gid 权限和符号链接（Rock Ridge 符号链接记录）
+          # 明确不用 -r（-r 会把 uid/gid 强制改 0，破坏 codesign）
+          xorrisofs \
+            -R \
+            -J \
+            -volid "SonomaInstall" \
+            -o macos_sonoma_rock.iso \
+            "$VOL" 2>&1 | tail -5
+          ls -lh macos_sonoma_rock.iso
+          df -h /
+      - name: Verify Rock Ridge ISO structure
+        run: |
+          hdiutil attach macos_sonoma_rock.iso -readonly -nobrowse
+          RVOL=$(ls -d /Volumes/SonomaInstall /Volumes/* 2>/dev/null | grep -iv "Install macOS Sonoma$" | head -1)
+          echo "RVOL=$RVOL"
+          echo "=== ROCK RIDGE ISO ==="
+          echo "files:    $(find "$RVOL" -type f | wc -l)"
+          echo "symlinks: $(find "$RVOL" -type l | wc -l)"
+          echo "xattr_files: $(find "$RVOL" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
+          echo "--- sample symlinks in ISO ---"
+          find "$RVOL" -type l | head -5
+          echo "--- sample xattr in ISO ---"
+          BIN2=$(find "$RVOL" -path "*.app/Contents/MacOS/*" -type f | head -1)
+          echo "BIN2=$BIN2"
+          xattr -l "$BIN2" 2>/dev/null | head -8 || echo "(no xattr on binary in ISO)"
+          hdiutil detach "$RVOL" 2>/dev/null || true
+      - name: Split and upload Rock Ridge ISO
+        run: |
+          hdiutil detach "$VOL" 2>/dev/null || true
+          rm -f macos_sonoma.iso
+          md5 macos_sonoma_rock.iso > md5_rock.txt
+          split -b 1900m macos_sonoma_rock.iso macos_sonoma_rock.iso.part-
+          rm -f macos_sonoma_rock.iso
+          ls -lh macos_sonoma_rock.iso.part-* | tail -12
+      - name: Upload to release sonoma-rockridge
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token $GITHUB_TOKEN"
+          OLD_ID=$(curl -s -H "$AUTH" "$API/releases/tags/sonoma-rockridge" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+          if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "" ]; then
+            curl -s -X DELETE -H "$AUTH" "$API/releases/$OLD_ID"
+            curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/sonoma-rockridge" || true
+          fi
+          python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" << 'BODY' > /tmp/body.json
+          macOS Sonoma 14.8.9 (23J631) Rock Ridge ISO（xorrisofs -R，保留符号链接与 POSIX 权限）
+
+          ## 构建方式
+          xorrisofs -R -J -volid SonomaInstall -o macos_sonoma_rock.iso <原始HFS+卷>
+          -R 保留符号链接与 uid/gid（不用 -r，避免破坏 codesign）
+
+          ## 使用（VMware Workstation）
+          1. 光驱 SATA x2：1st=VMware-OpenCore.iso（引导），2nd=macos_sonoma_rock.iso（安装）
+          2. 固件 UEFI、关安全启动、内存≥8GB、磁盘≥60GB
+          3. 若报损坏：实用工具→终端→date 062000002024.00→exit→重新安装
+
+          ## 合并
+          Windows (CMD): copy /b macos_sonoma_rock.iso.part-* macos_sonoma_rock.iso
+          Linux/macOS : cat macos_sonoma_rock.iso.part-* > macos_sonoma_rock.iso
+          BODY
+          RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\":\"sonoma-rockridge\",\"name\":\"Sonoma ISO Rock Ridge\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
+            "$API/releases" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          echo "Release ID: $RELEASE_ID"
+          for f in macos_sonoma_rock.iso.part-* md5_rock.txt; do
+            echo "Uploading $f ..."
+            curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" \
+              --upload-file "$f" \
+              "$UPLOAD/releases/$RELEASE_ID/assets?name=$(basename "$f")" -o /dev/null -w "  -> HTTP %{http_code}\n"
+          done
+      - name: Output download link
+        run: |
+          echo "Download: https://github.com/${{ github.repository }}/releases/tag/sonoma-rockridge"
