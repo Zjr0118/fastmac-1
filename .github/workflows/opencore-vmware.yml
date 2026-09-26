@@ -22,21 +22,27 @@ jobs:
           echo "KVM_DIR=$KVM_DIR" >> $GITHUB_ENV
           ls "$KVM_DIR/EFI/OC/"
       - name: Download kexts (latest official releases)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           get_kext () {
             repo=$1
-            zipname=$2
-            tag=$(curl -s "https://api.github.com/repos/$repo/releases/latest" | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])')
+            tag=$(curl -s -H "Authorization: token $GITHUB_TOKEN" "https://api.github.com/repos/$repo/releases/latest" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("tag_name",""))')
             echo "== $repo $tag =="
-            curl -L -s -o /tmp/kext_$repo.zip "https://github.com/$repo/releases/download/$tag/$zipname"
+            if [ -z "$tag" ]; then
+              echo "failed to get tag for $repo"
+              return 1
+            fi
+            curl -L -s -o /tmp/kext_$repo.zip "https://github.com/$repo/releases/download/$tag/$repo-$tag-RELEASE.zip"
             mkdir -p /tmp/kext_$repo
             unzip -q -o /tmp/kext_$repo.zip -d /tmp/kext_$repo
+            echo "downloaded $repo-$tag-RELEASE.zip"
           }
-          get_kext acidanthera/Lilu "Lilu-$tag-RELEASE.zip" || true
-          get_kext acidanthera/WhateverGreen "WhateverGreen-$tag-RELEASE.zip" || true
-          get_kext acidanthera/AppleALC "AppleALC-$tag-RELEASE.zip" || true
-          get_kext acidanthera/BrcmPatchRAM "BrcmPatchRAM-$tag-RELEASE.zip" || true
-          get_kext acidanthera/CryptexFixup "CryptexFixup-$tag-RELEASE.zip" || true
+          get_kext acidanthera/Lilu || true
+          get_kext acidanthera/WhateverGreen || true
+          get_kext acidanthera/AppleALC || true
+          get_kext acidanthera/BrcmPatchRAM || true
+          get_kext acidanthera/CryptexFixup || true
           ls /tmp/ | grep kext
       - name: Assemble EFI structure
         run: |
