@@ -74,25 +74,25 @@ jobs:
             curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/sonoma-standard" || true
           fi
           cat > /tmp/body.md << 'EOF'
-macOS Sonoma 14.8.9 标准 ISO9660+UDF 格式（解决"安装器已损坏"读取问题）
+          macOS Sonoma 14.8.9 标准 ISO9660+UDF 格式（解决"安装器已损坏"读取问题）
 
-## 说明
-- 本版本由原始 UDTO 镜像用 hdiutil makehybrid 转换为标准 ISO9660+Joliet+UDF 混合格式
-- 虚拟光驱（VMware/QEMU/Proxmox）读取更稳定，解决"应用程序副本已损坏"报错
-- 分卷：standard.part-aa ~ 末尾，合并后 MD5 见 standard.md5
+          ## 说明
+          - 本版本由原始 UDTO 镜像用 hdiutil makehybrid 转换为标准 ISO9660+Joliet+UDF 混合格式
+          - 虚拟光驱（VMware/QEMU/Proxmox）读取更稳定，解决"应用程序副本已损坏"报错
+          - 分卷：standard.part-aa ~ 末尾，合并后 MD5 见 standard.md5
 
-## Windows merge (CMD)
-copy /b standard.part-* macos_sonoma_standard.iso
+          ## Windows merge (CMD)
+          copy /b standard.part-* macos_sonoma_standard.iso
 
-## Linux/macOS merge
-cat standard.part-* > macos_sonoma_standard.iso
+          ## Linux/macOS merge
+          cat standard.part-* > macos_sonoma_standard.iso
 
-## Boot (Proxmox/QEMU/VMware)
-1. 光驱1 = OpenCore.iso（引导盘，用 sonoma-latest release 里的 OpenCore.iso）
-2. 光驱2 = macos_sonoma_standard.iso（安装盘）
-3. BIOS=OVMF(UEFI), Machine=q35
-4. 如仍提示损坏：进安装器终端执行 date 092600002026.00 后关闭终端重试
-EOF
+          ## Boot (Proxmox/QEMU/VMware)
+          1. 光驱1 = OpenCore.iso（引导盘，用 sonoma-latest release 里的 OpenCore.iso）
+          2. 光驱2 = macos_sonoma_standard.iso（安装盘）
+          3. BIOS=OVMF(UEFI), Machine=q35
+          4. 如仍提示损坏：进安装器终端执行 date 092600002026.00 后关闭终端重试
+          EOF
           python3 -c "import json;print(json.dumps(open('/tmp/body.md').read()))" > /tmp/body.json
           RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
             -d "{\"tag_name\":\"sonoma-standard\",\"name\":\"Sonoma-ISO Standard Format\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
