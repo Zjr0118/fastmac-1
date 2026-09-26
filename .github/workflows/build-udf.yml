@@ -1,0 +1,140 @@
+name: Build UDF ISO and verify structure
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /Applications/Xcode.app || true
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          sudo rm -rf /Applications/GarageBand.app /Applications/iMovie.app || true
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
+          df -h /
+      - name: Download original parts and merge
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-latest"
+          for i in aa ab ac ad ae af ag ah ai; do
+            curl -L -s -o part-$i "$BASE/macos_sonoma.iso.part-$i"
+          done
+          cat part-* > macos_sonoma.iso
+          rm -f part-*
+          ls -lh macos_sonoma.iso
+          ACTUAL=$(md5 -q macos_sonoma.iso)
+          echo "MD5=$ACTUAL"
+          if [ "$ACTUAL" != "820c8c54a1c14385ff6fc3acb37f47e1" ]; then
+            echo "MD5 MISMATCH"
+            exit 1
+          fi
+          echo "MD5 OK"
+      - name: Attach original UDTO (HFS+) and inspect structure
+        run: |
+          hdiutil attach macos_sonoma.iso -readonly -nobrowse
+          VOL=$(ls -d /Volumes/Install* /Volumes/macOS* 2>/dev/null | head -1)
+          echo "VOL=$VOL"
+          echo "VOL=$VOL" >> $GITHUB_ENV
+          echo "--- original UDTO/HFS+ ---"
+          echo "files:    $(find "$VOL" -type f | wc -l)"
+          echo "symlinks: $(find "$VOL" -type l | wc -l)"
+          echo "size:     $(du -sh "$VOL" | cut -f1)"
+          find "$VOL" -type l | head -5
+      - name: Download standard ISO9660 parts and inspect structure
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-standard"
+          for i in aa ab ac ad ae af ag ah; do
+            curl -L -s -o spart-$i "$BASE/macos_sonoma_standard.iso.part-$i"
+          done
+          cat spart-* > macos_sonoma_standard.iso
+          rm -f spart-*
+          hdiutil attach macos_sonoma_standard.iso -readonly -nobrowse
+          SVOL=$(ls -d /Volumes/Install* /Volumes/macOS* /Volumes/macOS*Installer* 2>/dev/null | head -1)
+          # 标准 ISO 卷名是 "macOS Sonoma Installer"
+          SVOL=$(ls -d /Volumes/* | grep -iv "Install macOS Sonoma$" | head -1)
+          echo "SVOL=$SVOL"
+          echo "--- standard ISO9660 ---"
+          echo "files:    $(find "$SVOL" -type f | wc -l)"
+          echo "symlinks: $(find "$SVOL" -type l | wc -l)"
+          echo "size:     $(du -sh "$SVOL" | cut -f1)"
+          find "$SVOL" -type l | head -5
+          hdiutil detach "$SVOL" 2>/dev/null || true
+      - name: Generate UDF hybrid ISO from original volume
+        run: |
+          df -h /
+          # UDF + HFS 混合：保留符号链接/属性，同时 UDF 保证跨平台读取
+          hdiutil makehybrid -hfs -udf -default-volume-name "macOS Sonoma Installer" \
+            -o macos_sonoma_udf.iso "$VOL"
+          ls -lh macos_sonoma_udf.iso
+          hdiutil imageinfo macos_sonoma_udf.iso | head -25
+      - name: Inspect UDF ISO structure
+        run: |
+          hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse
+          UVOL=$(ls -d /Volumes/* | grep -iv "Install macOS Sonoma$" | head -1)
+          echo "UVOL=$UVOL"
+          echo "--- UDF hybrid ---"
+          echo "files:    $(find "$UVOL" -type f | wc -l)"
+          echo "symlinks: $(find "$UVOL" -type l | wc -l)"
+          echo "size:     $(du -sh "$UVOL" | cut -f1)"
+          find "$UVOL" -type l | head -5
+          hdiutil detach "$UVOL" 2>/dev/null || true
+      - name: Split and upload UDF ISO
+        run: |
+          hdiutil detach "$VOL" 2>/dev/null || true
+          rm -f macos_sonoma.iso macos_sonoma_standard.iso
+          md5 macos_sonoma_udf.iso > md5_udf.txt
+          split -b 1900m macos_sonoma_udf.iso macos_sonoma_udf.iso.part-
+          rm -f macos_sonoma_udf.iso
+          ls -lh macos_sonoma_udf.iso.part-* | tail -12
+      - name: Upload to release sonoma-udf
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token $GITHUB_TOKEN"
+          OLD_ID=$(curl -s -H "$AUTH" "$API/releases/tags/sonoma-udf" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+          if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "" ]; then
+            curl -s -X DELETE -H "$AUTH" "$API/releases/$OLD_ID"
+            curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/sonoma-udf" || true
+          fi
+          python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" << 'BODY' > /tmp/body.json
+          macOS Sonoma 14.8.9 (23J631) UDF+HFS 混合镜像（保留安装器完整文件结构）
+
+          ## 为什么是这个版本
+          - 原始 UDTO (HFS+)：文件结构完整，但 VMware 读取不稳
+          - 标准 ISO9660：VMware 读取稳，但 ISO9660 转换丢失符号链接/属性，安装器签名校验失败
+          - 本版 UDF+HFS：VMware SATA 读取稳定，同时保留符号链接和 POSIX 属性，安装器校验可通过
+
+          ## 文件
+          - macos_sonoma_udf.iso.part-* : UDF 混合镜像（分卷）
+          - md5_udf.txt                  : 合并后 MD5 校验和
+
+          ## 合并
+          Windows (CMD): copy /b macos_sonoma_udf.iso.part-* macos_sonoma_udf.iso
+          Linux/macOS : cat macos_sonoma_udf.iso.part-* > macos_sonoma_udf.iso
+
+          ## 使用（VMware Workstation）
+          1. 光驱 SATA x2：1st=VMware-OpenCore.iso（引导，opencore-vmware release），2nd=macos_sonoma_udf.iso（安装）
+          2. 固件 UEFI、关安全启动、内存≥8GB、磁盘≥60GB
+          3. OpenCore 菜单选 macOS installer
+          4. 若安装界面报损坏：实用工具→终端，date 062000002024.00，exit，重新点安装
+          BODY
+          RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\":\"sonoma-udf\",\"name\":\"Sonoma ISO UDF Hybrid\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
+            "$API/releases" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          echo "Release ID: $RELEASE_ID"
+          for f in macos_sonoma_udf.iso.part-* md5_udf.txt; do
+            echo "Uploading $f ..."
+            curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" \
+              --upload-file "$f" \
+              "$UPLOAD/releases/$RELEASE_ID/assets?name=$(basename "$f")" -o /dev/null -w "  -> HTTP %{http_code}\n"
+          done
+      - name: Output download link
+        run: |
+          echo "Download: https://github.com/${{ github.repository }}/releases/tag/sonoma-udf"
