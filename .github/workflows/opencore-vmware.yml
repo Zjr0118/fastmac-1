@@ -9,61 +9,66 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Download and extract OpenCore KVM ISO
+      - name: Download base components (OpenCorePkg + KVM config)
         run: |
-          curl -L -s -o OpenCore-v21.iso.gz "https://github.com/thenickdude/KVM-Opencore/releases/download/v21/OpenCore-v21.iso.gz"
-          gunzip -f OpenCore-v21.iso.gz
-          ls -lh OpenCore-v21.iso
-      - name: Attach partitions without mounting (GPT hybrid ISO)
+          curl -L -s -o /tmp/op.zip "https://github.com/acidanthera/OpenCorePkg/releases/download/1.0.7/OpenCore-1.0.7-RELEASE.zip"
+          mkdir -p /tmp/op
+          unzip -q -o /tmp/op.zip -d /tmp/op
+          curl -L -s -o /tmp/kvm.tar.gz "https://codeload.github.com/thenickdude/KVM-Opencore/tar.gz/refs/tags/v21"
+          mkdir -p /tmp/kvm
+          tar xzf /tmp/kvm.tar.gz -C /tmp/kvm
+          KVM_DIR=$(find /tmp/kvm -maxdepth 1 -type d -name "KVM-Opencore*" | head -1)
+          echo "KVM_DIR=$KVM_DIR"
+          echo "KVM_DIR=$KVM_DIR" >> $GITHUB_ENV
+          ls "$KVM_DIR/EFI/OC/"
+      - name: Download kexts (latest official releases)
         run: |
-          DEV=$(hdiutil attach OpenCore-v21.iso -nomount -noverify | awk '{print $1}' | tail -1)
-          echo "DEV=$DEV"
-          echo "DEV=$DEV" >> $GITHUB_ENV
-          diskutil list "$DEV"
-      - name: Mount each partition and locate EFI
+          get_kext () {
+            repo=$1
+            zipname=$2
+            tag=$(curl -s "https://api.github.com/repos/$repo/releases/latest" | python3 -c 'import sys,json;print(json.load(sys.stdin)["tag_name"])')
+            echo "== $repo $tag =="
+            curl -L -s -o /tmp/kext_$repo.zip "https://github.com/$repo/releases/download/$tag/$zipname"
+            mkdir -p /tmp/kext_$repo
+            unzip -q -o /tmp/kext_$repo.zip -d /tmp/kext_$repo
+          }
+          get_kext acidanthera/Lilu "Lilu-$tag-RELEASE.zip" || true
+          get_kext acidanthera/WhateverGreen "WhateverGreen-$tag-RELEASE.zip" || true
+          get_kext acidanthera/AppleALC "AppleALC-$tag-RELEASE.zip" || true
+          get_kext acidanthera/BrcmPatchRAM "BrcmPatchRAM-$tag-RELEASE.zip" || true
+          get_kext acidanthera/CryptexFixup "CryptexFixup-$tag-RELEASE.zip" || true
+          ls /tmp/ | grep kext
+      - name: Assemble EFI structure
         run: |
-          mkdir -p oc_extract
-          FOUND=0
-          for p in $(diskutil list "$DEV" | grep -oE "disk[0-9]+s[0-9]+" | sort -u); do
-            echo "== trying /dev/$p =="
-            if hdiutil attach "/dev/$p" -readonly -nobrowse 2>/dev/null; then
-              VOL=$(ls -d /Volumes/* | head -1)
-              echo "  mounted at $VOL"
-              if [ -d "$VOL/EFI" ]; then
-                echo "  EFI found on $p"
-                cp -R "$VOL/EFI" oc_extract/
-                FOUND=1
-                hdiutil detach "$VOL" 2>/dev/null || true
-                break
-              fi
-              hdiutil detach "$VOL" 2>/dev/null || true
+          mkdir -p oc_extract/EFI/OC
+          # 1. OpenCorePkg 官方 EFI 骨架（OpenCore.efi + Drivers + Tools + Resources）
+          cp -R /tmp/op/X64/EFI/OC/* oc_extract/EFI/OC/
+          # 2. UEFI boot path
+          mkdir -p oc_extract/EFI/BOOT
+          cp /tmp/op/X64/EFI/BOOT/bootx64.efi oc_extract/EFI/BOOT/
+          # 3. KVM config + ACPI + 内置 Kexts
+          cp "$KVM_DIR/EFI/OC/config.plist" oc_extract/EFI/OC/
+          cp -R "$KVM_DIR/EFI/OC/ACPI/"* oc_extract/EFI/OC/ACPI/
+          cp -R "$KVM_DIR/EFI/OC/Kexts/"* oc_extract/EFI/OC/Kexts/
+          # 4. config 引用的入口类驱动在 Tools 里，复制到 Drivers（KVM 原 ISO 即如此布局）
+          for t in ResetNvramEntry ToggleSipEntry FirmwareSettingsEntry OpenShell; do
+            if [ -f "/tmp/op/X64/EFI/OC/Tools/$t.efi" ]; then
+              cp "/tmp/op/X64/EFI/OC/Tools/$t.efi" oc_extract/EFI/OC/Drivers/ || true
             fi
           done
-          echo "FOUND=$FOUND"
-          if [ "$FOUND" = "0" ]; then
-            echo "No partition with EFI found, dumping raw GPT layout"
-            diskutil list "$DEV"
-            exit 1
-          fi
-          find oc_extract/EFI -maxdepth 3 | head -40
-      - name: Ensure UEFI boot path exists
-        run: |
-          if [ ! -f oc_extract/EFI/BOOT/bootx64.efi ]; then
-            echo "EFI/BOOT missing, fetching from OpenCorePkg 1.0.7 RELEASE"
-            curl -L -s -o /tmp/op.zip "https://github.com/acidanthera/OpenCorePkg/releases/download/1.0.7/OpenCore-1.0.7-RELEASE.zip"
-            mkdir -p /tmp/op
-            unzip -q -o /tmp/op.zip -d /tmp/op
-            mkdir -p oc_extract/EFI/BOOT
-            cp /tmp/op/X64/EFI/BOOT/bootx64.efi oc_extract/EFI/BOOT/
-            echo "copied bootx64.efi"
-          else
-            echo "EFI/BOOT/bootx64.efi already present"
-          fi
-          ls -la oc_extract/EFI/BOOT/ 2>/dev/null || true
+          # 5. 官方 kext 解压后复制
+          find /tmp/kext_* -name "*.kext" -maxdepth 3 2>/dev/null | while read k; do
+            cp -R "$k" oc_extract/EFI/OC/Kexts/ 2>/dev/null || true
+          done
+          echo "--- OC content ---"
+          ls oc_extract/EFI/OC/
+          echo "--- Kexts ---"
+          ls oc_extract/EFI/OC/Kexts/ | head -30
+          echo "--- Drivers ---"
+          ls oc_extract/EFI/OC/Drivers/ | head -40
       - name: Patch config.plist for VMware
         run: |
           CFG="oc_extract/EFI/OC/config.plist"
-          ls -la "$CFG"
           python3 << 'PYEOF'
           import plistlib
           cfg_path = 'oc_extract/EFI/OC/config.plist'
@@ -99,7 +104,6 @@ jobs:
               plistlib.dump(cfg, f, fmt=plistlib.FMT_XML)
           print('config.plist saved')
           PYEOF
-          echo "--- patched keys ---"
           /usr/libexec/PlistBuddy -c "Print :Kernel:Quirks:ProvideCurrentCpuInfo" "$CFG"
           /usr/libexec/PlistBuddy -c "Print :NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args" "$CFG"
           /usr/libexec/PlistBuddy -c "Print :Misc:Security:SecureBootModel" "$CFG"
@@ -109,7 +113,6 @@ jobs:
           hdiutil makehybrid -iso -joliet -udf -default-volume-name "VMware OpenCore" \
             -o VMware-OpenCore.iso oc_extract
           ls -lh VMware-OpenCore.iso
-          hdiutil imageinfo VMware-OpenCore.iso | head -15
       - name: Upload VMware OpenCore ISO
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -123,7 +126,7 @@ jobs:
             curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/opencore-vmware" || true
           fi
           python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" << 'BODY' > /tmp/body.json
-          VMware Workstation 专用 OpenCore 引导盘（基于 KVM-Opencore v21 修改）
+          VMware Workstation 专用 OpenCore 引导盘（基于 KVM-Opencore v21 配置 + OpenCorePkg 1.0.7 官方组件）
 
           ## 修改内容
           - ProvideCurrentCpuInfo = true（VMware 虚拟 CPU 需要）
