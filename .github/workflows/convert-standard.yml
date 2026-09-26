@@ -1,16 +1,17 @@
-name: Convert ISO to Standard Format
+name: Convert ISO to standard ISO9660
 on:
   workflow_dispatch:
 jobs:
   convert:
     runs-on: macos-14
-    timeout-minutes: 110
+    timeout-minutes: 120
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
       - name: Free up disk space
         run: |
+          df -h /
           sudo rm -rf /Applications/Xcode.app || true
           sudo rm -rf /Library/Developer/CommandLineTools || true
           sudo rm -rf /Applications/GarageBand.app /Applications/iMovie.app /Applications/Keynote.app /Applications/Pages.app /Applications/Numbers.app || true
@@ -18,7 +19,7 @@ jobs:
           brew cleanup --prune=all || true
           rm -rf ~/Library/Caches/* /tmp/* || true
           df -h /
-      - name: Download parts and md5
+      - name: Download parts and md5 from release
         run: |
           BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-latest"
           for i in aa ab ac ad ae af ag ah ai; do
@@ -26,8 +27,8 @@ jobs:
             curl -L -s -o part-$i "$BASE/macos_sonoma.iso.part-$i"
           done
           curl -L -s -o md5.txt "$BASE/md5.txt"
-          ls -lh part-aa part-ai md5.txt
-      - name: Merge and verify MD5
+          ls -lh part-* md5.txt | tail -5
+      - name: Merge parts and verify MD5
         run: |
           cat part-* > macos_sonoma.iso
           rm -f part-*
@@ -36,72 +37,88 @@ jobs:
           EXPECTED=$(grep 'macos_sonoma.iso' md5.txt | awk -F'= ' '{print $2}')
           echo "ACTUAL   = $ACTUAL"
           echo "EXPECTED = $EXPECTED"
-          [ "$ACTUAL" = "$EXPECTED" ] && echo "MD5 MATCH ✅" || echo "MD5 MISMATCH ❌"
-      - name: Attach and convert to standard ISO9660+UDF
+          if [ "$ACTUAL" = "$EXPECTED" ] && [ -n "$EXPECTED" ]; then
+            echo "RESULT: MD5 MATCH ✅"
+          else
+            echo "RESULT: MD5 MISMATCH ❌ (abort)"
+            exit 1
+          fi
+      - name: Attach installer volume
         run: |
-          echo "=== attaching ==="
           hdiutil attach macos_sonoma.iso -readonly -nobrowse
-          ls -la /Volumes/
-          VOL=$(ls -d /Volumes/Install* 2>/dev/null | head -1)
+          VOL=$(ls -d /Volumes/Install* /Volumes/macOS* 2>/dev/null | head -1)
           echo "VOL=$VOL"
-          # makehybrid 生成标准 ISO9660 + Joliet + UDF 混合镜像（UDF 桥接支持 >4GB 文件）
-          echo "=== converting (this takes a while) ==="
-          hdiutil makehybrid -iso -joliet -udf -default-volume-name "Install macOS Sonoma" -o macos_sonoma_standard.iso "$VOL"
-          hdiutil detach "$VOL" || true
-          ls -lh macos_sonoma_standard.iso
-          df -h /
-      - name: Split standard ISO into parts
+          echo "VOL=$VOL" >> $GITHUB_ENV
+          ls -la "$VOL" | head -10
+      - name: Convert to standard ISO9660 (hybrid ISO/UDF)
         run: |
+          df -h /
+          # 生成标准 ISO9660 + Joliet + UDF 混合镜像（主流虚拟化平台均可读取）
+          hdiutil makehybrid -iso -joliet -udf -default-volume-name "macOS Sonoma Installer" \
+            -o macos_sonoma_standard.iso "$VOL"
+          ls -lh macos_sonoma_standard.iso
+          # 检查生成的镜像格式
+          hdiutil imageinfo macos_sonoma_standard.iso | head -20
+      - name: Detach volume and split standard ISO
+        run: |
+          hdiutil detach "$VOL" 2>/dev/null || true
           rm -f macos_sonoma.iso
           df -h /
-          md5 -q macos_sonoma_standard.iso > standard.md5
-          echo "standard ISO MD5: $(cat standard.md5)"
-          split -b 1900m macos_sonoma_standard.iso standard.part-
+          md5 macos_sonoma_standard.iso > md5_standard.txt
+          # 分卷（1.9GB 一个，GitHub 单文件上限 2GB）
+          split -b 1900m macos_sonoma_standard.iso macos_sonoma_standard.iso.part-
           rm -f macos_sonoma_standard.iso
-          ls -lh standard.part-*
+          ls -lh macos_sonoma_standard.iso.part-* | tail -15
           df -h /
-      - name: Create release and upload
+      - name: Upload to release sonoma-standard
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
           AUTH="Authorization: token $GITHUB_TOKEN"
-          # 删除旧的 standard release（若存在）
+          # 删除旧 release/tag
           OLD_ID=$(curl -s -H "$AUTH" "$API/releases/tags/sonoma-standard" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
           if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "" ]; then
             curl -s -X DELETE -H "$AUTH" "$API/releases/$OLD_ID"
             curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/sonoma-standard" || true
           fi
-          cat > /tmp/body.md << 'EOF'
-          macOS Sonoma 14.8.9 标准 ISO9660+UDF 格式（解决"安装器已损坏"读取问题）
+          python3 -c "import json;print(json.dumps(open('/dev/stdin').read()))" << 'BODY' > /tmp/body.json
+macOS Sonoma 14.8.9 (23J631) 标准 ISO9660 混合镜像（ISO/UDF 双格式）
 
-          ## 说明
-          - 本版本由原始 UDTO 镜像用 hdiutil makehybrid 转换为标准 ISO9660+Joliet+UDF 混合格式
-          - 虚拟光驱（VMware/QEMU/Proxmox）读取更稳定，解决"应用程序副本已损坏"报错
-          - 分卷：standard.part-aa ~ 末尾，合并后 MD5 见 standard.md5
+## 为什么有这个版本
+原始 macos_sonoma.iso 是 Apple UDTO/CDR 格式（改后缀 .iso），Proxmox/QEMU 可正常读取，但 VMware/VirtualBox 等平台读取易异常，导致安装时报"应用程序副本已损坏"。
+本版本在真实 macOS 上重新生成为标准 ISO9660+UDF 混合镜像，主流虚拟化平台均可正常读取。
 
-          ## Windows merge (CMD)
-          copy /b standard.part-* macos_sonoma_standard.iso
+## 文件
+- macos_sonoma_standard.iso.part-* : 标准格式安装镜像（分卷）
+- md5_standard.txt                  : 合并后 MD5 校验和
+- OpenCore.iso                      : 引导盘（在 sonoma-latest release 下载）
 
-          ## Linux/macOS merge
-          cat standard.part-* > macos_sonoma_standard.iso
+## 合并
+Windows (CMD): copy /b macos_sonoma_standard.iso.part-* macos_sonoma_standard.iso
+Linux/macOS : cat macos_sonoma_standard.iso.part-* > macos_sonoma_standard.iso
+校验: md5sum macos_sonoma_standard.iso，与 md5_standard.txt 比对
 
-          ## Boot (Proxmox/QEMU/VMware)
-          1. 光驱1 = OpenCore.iso（引导盘，用 sonoma-latest release 里的 OpenCore.iso）
-          2. 光驱2 = macos_sonoma_standard.iso（安装盘）
-          3. BIOS=OVMF(UEFI), Machine=q35
-          4. 如仍提示损坏：进安装器终端执行 date 092600002026.00 后关闭终端重试
-          EOF
-          python3 -c "import json;print(json.dumps(open('/tmp/body.md').read()))" > /tmp/body.json
+## 使用（Proxmox/QEMU 示例）
+1. 上传 macos_sonoma_standard.iso 和 OpenCore.iso
+2. VM: BIOS=OVMF(UEFI), Machine=q35
+3. 两个光驱: 1st=OpenCore.iso(引导), 2nd=macos_sonoma_standard.iso(安装)
+4. OpenCore 菜单选 macOS installer
+
+## 若仍提示损坏
+在安装界面打开终端执行: date 060100002026.00 （设为 2026-06-01），关闭终端后重新点"安装"。
+BODY
           RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
             -d "{\"tag_name\":\"sonoma-standard\",\"name\":\"Sonoma-ISO Standard Format\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
             "$API/releases" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
           echo "Release ID: $RELEASE_ID"
-          for f in standard.part-* standard.md5; do
+          for f in macos_sonoma_standard.iso.part-* md5_standard.txt; do
             echo "Uploading $f ..."
             curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" \
               --upload-file "$f" \
               "$UPLOAD/releases/$RELEASE_ID/assets?name=$(basename "$f")" -o /dev/null -w "  -> HTTP %{http_code}, %{size_upload} bytes\n"
           done
-          echo "DONE: https://github.com/${GITHUB_REPOSITORY}/releases/tag/sonoma-standard"
+      - name: Output download link
+        run: |
+          echo "Download page: https://github.com/${{ github.repository }}/releases/tag/sonoma-standard"
