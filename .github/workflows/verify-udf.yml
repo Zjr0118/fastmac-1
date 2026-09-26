@@ -1,0 +1,43 @@
+name: Verify UDF ISO structure
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /Applications/Xcode.app || true
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
+          df -h /
+      - name: Download UDF parts and merge
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-udf"
+          for i in aa ab ac ad ae af ag ah; do
+            curl -L -s -o upart-$i "$BASE/macos_sonoma_udf.iso.part-$i"
+          done
+          cat upart-* > macos_sonoma_udf.iso
+          rm -f upart-*
+          ls -lh macos_sonoma_udf.iso
+      - name: Attach UDF ISO and inspect structure
+        run: |
+          UMOUNT=$(hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "UMOUNT=$UMOUNT"
+          echo "=== UDF HYBRID ISO ==="
+          echo "files:    $(find "$UMOUNT" -type f | wc -l)"
+          echo "symlinks: $(find "$UMOUNT" -type l | wc -l)"
+          echo "xattr_files: $(find "$UMOUNT" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
+          echo "--- sample symlinks ---"
+          find "$UMOUNT" -type l | head -8
+          BIN=$(find "$UMOUNT" -path "*.app/Contents/MacOS/*" -type f | head -1)
+          echo "sample_bin=$BIN"
+          xattr -l "$BIN" 2>/dev/null | head -8 || echo "(no xattr on binary in UDF ISO)"
+          echo "--- verify app bundle present ---"
+          ls "$UMOUNT" | head -10
+          echo "--- SharedSupport check ---"
+          ls "$UMOUNT/Install macOS Sonoma.app/Contents/SharedSupport/" 2>/dev/null | head -5
+          hdiutil detach "$UMOUNT" 2>/dev/null || true
