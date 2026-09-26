@@ -1,0 +1,72 @@
+name: Compare codesign original vs UDF
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /Applications/Xcode.app || true
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
+          df -h /
+      - name: Download and attach ORIGINAL UDTO
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-latest"
+          for i in aa ab ac ad ae af ag ah ai; do
+            curl -L -s -o part-$i "$BASE/macos_sonoma.iso.part-$i"
+          done
+          cat part-* > orig.iso
+          rm -f part-*
+          md5 -q orig.iso
+          OMOUNT=$(hdiutil attach orig.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "OMOUNT=$OMOUNT"
+          echo "OMOUNT=$OMOUNT" >> $GITHUB_ENV
+      - name: Codesign original HFS+ (strict and non-strict)
+        run: |
+          APP="$OMOUNT/Install macOS Sonoma.app"
+          echo "=== ORIGINAL: strict ==="
+          codesign --verify --deep --strict "$APP"; echo "STRICT_EXIT=$?"
+          echo "=== ORIGINAL: non-strict ==="
+          codesign --verify --deep "$APP"; echo "NONSTRICT_EXIT=$?"
+          echo "=== ORIGINAL: verbose output ==="
+          codesign --verify --deep --strict --verbose=4 "$APP" 2>&1 | head -5
+      - name: Download and attach UDF ISO
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-udf"
+          for i in aa ab ac ad ae af ag ah; do
+            curl -L -s -o upart-$i "$BASE/macos_sonoma_udf.iso.part-$i"
+          done
+          cat upart-* > udf.iso
+          rm -f upart-*
+          UMOUNT=$(hdiutil attach udf.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "UMOUNT=$UMOUNT"
+          echo "UMOUNT=$UMOUNT" >> $GITHUB_ENV
+      - name: Codesign UDF ISO (strict and non-strict)
+        run: |
+          APP="$UMOUNT/Install macOS Sonoma.app"
+          echo "=== UDF: strict ==="
+          codesign --verify --deep --strict "$APP"; echo "STRICT_EXIT=$?"
+          echo "=== UDF: non-strict ==="
+          codesign --verify --deep "$APP"; echo "NONSTRICT_EXIT=$?"
+          echo "=== UDF: verbose output ==="
+          codesign --verify --deep --strict --verbose=4 "$APP" 2>&1 | head -5
+      - name: Compare key file hashes (original vs UDF)
+        run: |
+          OAPP="$OMOUNT/Install macOS Sonoma.app"
+          UAPP="$UMOUNT/Install macOS Sonoma.app"
+          echo "=== hash compare key binaries ==="
+          for f in "Contents/MacOS/InstallAssistant" "Contents/Info.plist" "Contents/version.plist"; do
+            OH=$(md5 -q "$OAPP/$f" 2>/dev/null)
+            UH=$(md5 -q "$UAPP/$f" 2>/dev/null)
+            echo "$f: orig=$OH udf=$UH $([ "$OH" = "$UH" ] && echo MATCH || echo DIFF)"
+          done
+          echo "=== xattr compare InstallAssistant ==="
+          echo "--- original ---"
+          xattr -l "$OAPP/Contents/MacOS/InstallAssistant" 2>/dev/null | head -10
+          echo "--- UDF ---"
+          xattr -l "$UAPP/Contents/MacOS/InstallAssistant" 2>/dev/null | head -10
