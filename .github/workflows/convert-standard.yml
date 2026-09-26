@@ -38,9 +38,9 @@ jobs:
           echo "ACTUAL   = $ACTUAL"
           echo "EXPECTED = $EXPECTED"
           if [ "$ACTUAL" = "$EXPECTED" ] && [ -n "$EXPECTED" ]; then
-            echo "RESULT: MD5 MATCH ✅"
+            echo "RESULT: MD5 MATCH OK"
           else
-            echo "RESULT: MD5 MISMATCH ❌ (abort)"
+            echo "RESULT: MD5 MISMATCH (abort)"
             exit 1
           fi
       - name: Attach installer volume
@@ -53,11 +53,9 @@ jobs:
       - name: Convert to standard ISO9660 (hybrid ISO/UDF)
         run: |
           df -h /
-          # 生成标准 ISO9660 + Joliet + UDF 混合镜像（主流虚拟化平台均可读取）
           hdiutil makehybrid -iso -joliet -udf -default-volume-name "macOS Sonoma Installer" \
             -o macos_sonoma_standard.iso "$VOL"
           ls -lh macos_sonoma_standard.iso
-          # 检查生成的镜像格式
           hdiutil imageinfo macos_sonoma_standard.iso | head -20
       - name: Detach volume and split standard ISO
         run: |
@@ -65,7 +63,6 @@ jobs:
           rm -f macos_sonoma.iso
           df -h /
           md5 macos_sonoma_standard.iso > md5_standard.txt
-          # 分卷（1.9GB 一个，GitHub 单文件上限 2GB）
           split -b 1900m macos_sonoma_standard.iso macos_sonoma_standard.iso.part-
           rm -f macos_sonoma_standard.iso
           ls -lh macos_sonoma_standard.iso.part-* | tail -15
@@ -74,41 +71,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          python3 << 'PYEOF'
+          body = """macOS Sonoma 14.8.9 (23J631) 标准 ISO9660 混合镜像（ISO/UDF 双格式）
+
+          ## 为什么有这个版本
+          原始 macos_sonoma.iso 是 Apple UDTO/CDR 格式（改后缀 .iso），Proxmox/QEMU 可正常读取，但 VMware/VirtualBox 等平台读取易异常，导致安装时报"应用程序副本已损坏"。
+          本版本在真实 macOS 上重新生成为标准 ISO9660+UDF 混合镜像，主流虚拟化平台均可正常读取。
+
+          ## 文件
+          - macos_sonoma_standard.iso.part-* : 标准格式安装镜像（分卷）
+          - md5_standard.txt                  : 合并后 MD5 校验和
+          - OpenCore.iso                      : 引导盘（在 sonoma-latest release 下载）
+
+          ## 合并
+          Windows (CMD): copy /b macos_sonoma_standard.iso.part-* macos_sonoma_standard.iso
+          Linux/macOS : cat macos_sonoma_standard.iso.part-* > macos_sonoma_standard.iso
+          校验: md5sum macos_sonoma_standard.iso，与 md5_standard.txt 比对
+
+          ## 使用（Proxmox/QEMU 示例）
+          1. 上传 macos_sonoma_standard.iso 和 OpenCore.iso
+          2. VM: BIOS=OVMF(UEFI), Machine=q35
+          3. 两个光驱: 1st=OpenCore.iso(引导), 2nd=macos_sonoma_standard.iso(安装)
+          4. OpenCore 菜单选 macOS installer
+
+          ## 若仍提示损坏
+          在安装界面打开终端执行: date 060100002026.00 （设为 2026-06-01），关闭终端后重新点"安装"。
+          """
+          import json
+          with open('/tmp/body.json', 'w') as f:
+              f.write(json.dumps(body))
+          PYEOF
           API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
           UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
           AUTH="Authorization: token $GITHUB_TOKEN"
-          # 删除旧 release/tag
           OLD_ID=$(curl -s -H "$AUTH" "$API/releases/tags/sonoma-standard" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
           if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "" ]; then
             curl -s -X DELETE -H "$AUTH" "$API/releases/$OLD_ID"
             curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/sonoma-standard" || true
           fi
-          python3 -c "import json;print(json.dumps(open('/dev/stdin').read()))" << 'BODY' > /tmp/body.json
-macOS Sonoma 14.8.9 (23J631) 标准 ISO9660 混合镜像（ISO/UDF 双格式）
-
-## 为什么有这个版本
-原始 macos_sonoma.iso 是 Apple UDTO/CDR 格式（改后缀 .iso），Proxmox/QEMU 可正常读取，但 VMware/VirtualBox 等平台读取易异常，导致安装时报"应用程序副本已损坏"。
-本版本在真实 macOS 上重新生成为标准 ISO9660+UDF 混合镜像，主流虚拟化平台均可正常读取。
-
-## 文件
-- macos_sonoma_standard.iso.part-* : 标准格式安装镜像（分卷）
-- md5_standard.txt                  : 合并后 MD5 校验和
-- OpenCore.iso                      : 引导盘（在 sonoma-latest release 下载）
-
-## 合并
-Windows (CMD): copy /b macos_sonoma_standard.iso.part-* macos_sonoma_standard.iso
-Linux/macOS : cat macos_sonoma_standard.iso.part-* > macos_sonoma_standard.iso
-校验: md5sum macos_sonoma_standard.iso，与 md5_standard.txt 比对
-
-## 使用（Proxmox/QEMU 示例）
-1. 上传 macos_sonoma_standard.iso 和 OpenCore.iso
-2. VM: BIOS=OVMF(UEFI), Machine=q35
-3. 两个光驱: 1st=OpenCore.iso(引导), 2nd=macos_sonoma_standard.iso(安装)
-4. OpenCore 菜单选 macOS installer
-
-## 若仍提示损坏
-在安装界面打开终端执行: date 060100002026.00 （设为 2026-06-01），关闭终端后重新点"安装"。
-BODY
           RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
             -d "{\"tag_name\":\"sonoma-standard\",\"name\":\"Sonoma-ISO Standard Format\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
             "$API/releases" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
