@@ -9,10 +9,6 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Install xorriso
-        run: |
-          brew install xorriso 2>&1 | tail -3 || true
-          xorrisofs --version 2>&1 | head -2 || echo "xorriso not available"
       - name: Free up disk space
         run: |
           sudo rm -rf /Applications/Xcode.app || true
@@ -22,6 +18,10 @@ jobs:
           brew cleanup --prune=all || true
           rm -rf ~/Library/Caches/* /tmp/* || true
           df -h /
+      - name: Install xorriso (after disk cleanup)
+        run: |
+          brew install xorriso 2>&1 | tail -3
+          xorrisofs --version 2>&1 | head -1
       - name: Download original parts and merge
         run: |
           BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-latest"
@@ -40,52 +40,47 @@ jobs:
           echo "MD5 OK"
       - name: Attach original HFS+ volume (baseline)
         run: |
-          hdiutil attach macos_sonoma.iso -readonly -nobrowse
-          VOL=$(ls -d /Volumes/Install* /Volumes/macOS* 2>/dev/null | head -1)
-          echo "VOL=$VOL"
-          echo "VOL=$VOL" >> $GITHUB_ENV
+          MOUNT=$(hdiutil attach macos_sonoma.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "MOUNT=$MOUNT"
+          echo "MOUNT=$MOUNT" >> $GITHUB_ENV
+          echo "VOL is: $MOUNT"
       - name: Baseline stats (original HFS+)
         run: |
-          echo "=== BASELINE HFS+ ==="
-          echo "files:    $(find "$VOL" -type f | wc -l)"
-          echo "symlinks: $(find "$VOL" -type l | wc -l)"
-          echo "xattr_files: $(find "$VOL" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
-          echo "--- sample xattr (app binary) ---"
-          BIN=$(find "$VOL" -path "*.app/Contents/MacOS/*" -type f | head -1)
-          echo "BIN=$BIN"
+          echo "=== BASELINE HFS+ ($MOUNT) ==="
+          echo "files:    $(find "$MOUNT" -type f | wc -l)"
+          echo "symlinks: $(find "$MOUNT" -type l | wc -l)"
+          echo "xattr_files: $(find "$MOUNT" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
+          BIN=$(find "$MOUNT" -path "*.app/Contents/MacOS/*" -type f | head -1)
+          echo "sample_bin=$BIN"
           xattr -l "$BIN" 2>/dev/null | head -8 || echo "(no xattr on binary)"
       - name: Build Rock Ridge ISO (xorrisofs -R -J)
         run: |
           df -h /
-          # 核心：-R 保留 POSIX uid/gid 权限和符号链接（Rock Ridge 符号链接记录）
-          # 明确不用 -r（-r 会把 uid/gid 强制改 0，破坏 codesign）
           xorrisofs \
             -R \
             -J \
             -volid "SonomaInstall" \
             -o macos_sonoma_rock.iso \
-            "$VOL" 2>&1 | tail -5
+            "$MOUNT" 2>&1 | tail -5
           ls -lh macos_sonoma_rock.iso
           df -h /
       - name: Verify Rock Ridge ISO structure
         run: |
-          hdiutil attach macos_sonoma_rock.iso -readonly -nobrowse
-          RVOL=$(ls -d /Volumes/SonomaInstall /Volumes/* 2>/dev/null | grep -iv "Install macOS Sonoma$" | head -1)
-          echo "RVOL=$RVOL"
+          RMOUNT=$(hdiutil attach macos_sonoma_rock.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "RMOUNT=$RMOUNT"
           echo "=== ROCK RIDGE ISO ==="
-          echo "files:    $(find "$RVOL" -type f | wc -l)"
-          echo "symlinks: $(find "$RVOL" -type l | wc -l)"
-          echo "xattr_files: $(find "$RVOL" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
+          echo "files:    $(find "$RMOUNT" -type f | wc -l)"
+          echo "symlinks: $(find "$RMOUNT" -type l | wc -l)"
+          echo "xattr_files: $(find "$RMOUNT" -type f -print0 | xargs -0 -I{} xattr "{}" 2>/dev/null | grep -c . || true)"
           echo "--- sample symlinks in ISO ---"
-          find "$RVOL" -type l | head -5
-          echo "--- sample xattr in ISO ---"
-          BIN2=$(find "$RVOL" -path "*.app/Contents/MacOS/*" -type f | head -1)
-          echo "BIN2=$BIN2"
+          find "$RMOUNT" -type l | head -5
+          BIN2=$(find "$RMOUNT" -path "*.app/Contents/MacOS/*" -type f | head -1)
+          echo "sample_bin2=$BIN2"
           xattr -l "$BIN2" 2>/dev/null | head -8 || echo "(no xattr on binary in ISO)"
-          hdiutil detach "$RVOL" 2>/dev/null || true
+          hdiutil detach "$RMOUNT" 2>/dev/null || true
       - name: Split and upload Rock Ridge ISO
         run: |
-          hdiutil detach "$VOL" 2>/dev/null || true
+          hdiutil detach "$MOUNT" 2>/dev/null || true
           rm -f macos_sonoma.iso
           md5 macos_sonoma_rock.iso > md5_rock.txt
           split -b 1900m macos_sonoma_rock.iso macos_sonoma_rock.iso.part-
