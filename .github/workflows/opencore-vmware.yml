@@ -14,15 +14,29 @@ jobs:
           curl -L -s -o OpenCore-v21.iso.gz "https://github.com/thenickdude/KVM-Opencore/releases/download/v21/OpenCore-v21.iso.gz"
           gunzip -f OpenCore-v21.iso.gz
           ls -lh OpenCore-v21.iso
-      - name: Extract EFI structure
+      - name: Extract EFI structure with bsdtar (no hdiutil)
         run: |
-          hdiutil attach OpenCore-v21.iso -readonly -nobrowse
-          OC_VOL=$(ls -d /Volumes/OpenCore* /Volumes/opencore* 2>/dev/null | head -1)
-          echo "OC_VOL=$OC_VOL"
           mkdir -p oc_extract
-          cp -R "$OC_VOL/EFI" oc_extract/
-          ls -la oc_extract/EFI/OC/ | head -20
-          hdiutil detach "$OC_VOL" 2>/dev/null || true
+          # macOS 自带 bsdtar (libarchive)，可直接解 ISO9660/Joliet
+          bsdtar -xf OpenCore-v21.iso -C oc_extract
+          echo "--- oc_extract top ---"
+          ls -la oc_extract/
+          echo "--- EFI ---"
+          find oc_extract/EFI -maxdepth 3 | head -40
+      - name: Ensure UEFI boot path exists
+        run: |
+          if [ ! -f oc_extract/EFI/BOOT/bootx64.efi ]; then
+            echo "EFI/BOOT missing, fetching from OpenCorePkg 1.0.7 RELEASE"
+            curl -L -s -o /tmp/op.zip "https://github.com/acidanthera/OpenCorePkg/releases/download/1.0.7/OpenCore-1.0.7-RELEASE.zip"
+            mkdir -p /tmp/op
+            unzip -q -o /tmp/op.zip -d /tmp/op
+            mkdir -p oc_extract/EFI/BOOT
+            cp /tmp/op/X64/EFI/BOOT/bootx64.efi oc_extract/EFI/BOOT/
+            echo "copied bootx64.efi"
+          else
+            echo "EFI/BOOT/bootx64.efi already present"
+          fi
+          ls -la oc_extract/EFI/BOOT/ 2>/dev/null || true
       - name: Patch config.plist for VMware
         run: |
           CFG="oc_extract/EFI/OC/config.plist"
