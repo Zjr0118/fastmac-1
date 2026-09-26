@@ -1,0 +1,115 @@
+name: Build VMware OpenCore ISO
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download and extract OpenCore KVM ISO
+        run: |
+          curl -L -s -o OpenCore-v21.iso.gz "https://github.com/thenickdude/KVM-Opencore/releases/download/v21/OpenCore-v21.iso.gz"
+          gunzip -f OpenCore-v21.iso.gz
+          ls -lh OpenCore-v21.iso
+      - name: Extract EFI structure
+        run: |
+          hdiutil attach OpenCore-v21.iso -readonly -nobrowse
+          OC_VOL=$(ls -d /Volumes/OpenCore* /Volumes/opencore* 2>/dev/null | head -1)
+          echo "OC_VOL=$OC_VOL"
+          mkdir -p oc_extract
+          cp -R "$OC_VOL/EFI" oc_extract/
+          ls -la oc_extract/EFI/OC/ | head -20
+          hdiutil detach "$OC_VOL" 2>/dev/null || true
+      - name: Patch config.plist for VMware
+        run: |
+          CFG="oc_extract/EFI/OC/config.plist"
+          ls -la "$CFG"
+          python3 << 'PYEOF'
+          import plistlib
+          cfg_path = 'oc_extract/EFI/OC/config.plist'
+          with open(cfg_path, 'rb') as f:
+              cfg = plistlib.load(f)
+          # 1. ProvideCurrentCpuInfo -> true (VMware virtual CPU)
+          try:
+              cfg['Kernel']['Quirks']['ProvideCurrentCpuInfo'] = True
+              print('ProvideCurrentCpuInfo -> True OK')
+          except Exception as e:
+              print('Kernel/Quirks missing:', e)
+          # 2. boot-args: add -no_compat_check, keep existing args
+          nvram_guid = '7C436110-AB2A-4BBB-A880-FE41995C9F82'
+          try:
+              args = cfg['NVRAM']['Add'].get(nvram_guid, {}).get('boot-args', '')
+              if not isinstance(args, str):
+                  args = ''
+              if '-no_compat_check' not in args:
+                  args = (args + ' -no_compat_check').strip()
+              cfg['NVRAM']['Add'][nvram_guid]['boot-args'] = args
+              print('boot-args ->', args)
+          except Exception as e:
+              print('NVRAM patch failed:', e)
+          # 3. SecureBootModel -> Disabled
+          try:
+              cfg['Misc']['Security']['SecureBootModel'] = 'Disabled'
+              print('SecureBootModel -> Disabled OK')
+          except Exception as e:
+              print('Security patch failed:', e)
+          # 4. AppleXcpmCfgLock -> false
+          try:
+              cfg['Kernel']['Quirks']['AppleXcpmCfgLock'] = False
+              print('AppleXcpmCfgLock -> False OK')
+          except Exception as e:
+              print('AppleXcpmCfgLock patch failed:', e)
+          with open(cfg_path, 'wb') as f:
+              plistlib.dump(cfg, f, fmt=plistlib.FMT_XML)
+          print('config.plist saved')
+          PYEOF
+          echo "--- patched keys ---"
+          /usr/libexec/PlistBuddy -c "Print :Kernel:Quirks:ProvideCurrentCpuInfo" "$CFG"
+          /usr/libexec/PlistBuddy -c "Print :NVRAM:Add:7C436110-AB2A-4BBB-A880-FE41995C9F82:boot-args" "$CFG"
+          /usr/libexec/PlistBuddy -c "Print :Misc:Security:SecureBootModel" "$CFG"
+      - name: Build VMware OpenCore ISO
+        run: |
+          ls -la oc_extract/
+          hdiutil makehybrid -iso -joliet -udf -default-volume-name "VMware OpenCore" \
+            -o VMware-OpenCore.iso oc_extract
+          ls -lh VMware-OpenCore.iso
+          hdiutil imageinfo VMware-OpenCore.iso | head -15
+      - name: Upload VMware OpenCore ISO
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+          UPLOAD="https://uploads.github.com/repos/${GITHUB_REPOSITORY}"
+          AUTH="Authorization: token $GITHUB_TOKEN"
+          OLD_ID=$(curl -s -H "$AUTH" "$API/releases/tags/opencore-vmware" | python3 -c 'import sys,json;print(json.load(sys.stdin).get("id",""))' 2>/dev/null || true)
+          if [ -n "$OLD_ID" ] && [ "$OLD_ID" != "" ]; then
+            curl -s -X DELETE -H "$AUTH" "$API/releases/$OLD_ID"
+            curl -s -X DELETE -H "$AUTH" "$API/git/refs/tags/opencore-vmware" || true
+          fi
+          python3 -c "import json,sys; print(json.dumps(sys.stdin.read()))" << 'BODY' > /tmp/body.json
+          VMware Workstation 专用 OpenCore 引导盘（基于 KVM-Opencore v21 修改）
+
+          ## 修改内容
+          - ProvideCurrentCpuInfo = true（VMware 虚拟 CPU 需要）
+          - boot-args 追加 -no_compat_check（跳过机型兼容检查）
+          - SecureBootModel = Disabled
+          - AppleXcpmCfgLock = false
+
+          ## 使用（配合标准版安装镜像）
+          1. VMware Workstation 虚拟机设置中，把两个光驱都改为 SATA 接口
+          2. 1st 光驱挂载本 OpenCore ISO（引导）
+          3. 2nd 光驱挂载 macos_sonoma_standard.iso（标准版安装镜像，从 sonoma-standard release 下载）
+          4. 固件 UEFI，关闭安全启动，内存≥8GB，磁盘≥60GB
+          5. OpenCore 菜单出现后选择 macOS installer
+          BODY
+          RELEASE_ID=$(curl -s -X POST -H "$AUTH" -H "Accept: application/vnd.github+json" \
+            -d "{\"tag_name\":\"opencore-vmware\",\"name\":\"OpenCore VMware Tuned\",\"prerelease\":true,\"body\":$(cat /tmp/body.json)}" \
+            "$API/releases" | python3 -c 'import sys,json;print(json.load(sys.stdin)["id"])')
+          echo "Release ID: $RELEASE_ID"
+          curl -s -X POST -H "$AUTH" -H "Content-Type: application/octet-stream" \
+            --upload-file VMware-OpenCore.iso \
+            "$UPLOAD/releases/$RELEASE_ID/assets?name=VMware-OpenCore.iso" -o /dev/null -w "OpenCore -> HTTP %{http_code}\n"
+          echo "Download: https://github.com/${{ github.repository }}/releases/tag/opencore-vmware"
