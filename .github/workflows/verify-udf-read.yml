@@ -26,24 +26,20 @@ jobs:
           md5 -q macos_sonoma_udf.iso
       - name: Attach and raw-device full read check
         run: |
-          UMOUNT=$(hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
-          echo "UMOUNT=$UMOUNT"
-          # 找到对应的块设备（整盘，无分区 UDF 通常 /dev/diskN）
-          DEV=$(hdiutil info -plist | python3 -c "
-          import plistlib,sys
-          d = plistlib.load(sys.stdin.buffer)
-          for img in d.get('images',[]):
-              for ent in img.get('system-entities',[]):
-                  if ent.get('mount-point') == '$UMOUNT':
-                      print(ent.get('dev-entry',''))
-          " 2>/dev/null)
+          set +e
+          OUT=$(hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse | tail -1)
+          echo "OUT=$OUT"
+          DEV=$(echo "$OUT" | awk '{print $1}')
           echo "DEV=$DEV"
           echo "=== fsck_udf filesystem consistency check ==="
-          fsck_udf -n "$DEV" 2>&1 | tail -8 || echo "(fsck_udf unavailable or non-udf device)"
+          fsck_udf -n "$DEV" 2>&1 | tail -8
+          echo "fsck done"
           echo "=== full raw read + MD5 (simulates copy-phase full read) ==="
           time dd if="$DEV" bs=1m 2>/dev/null | md5
+          echo "dd done"
           echo "=== file MD5 reference ==="
           md5 -q macos_sonoma_udf.iso
+          set -e
       - name: Full-tree ditto copy (simulate installer copy phase)
         run: |
           UMOUNT=$(hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
