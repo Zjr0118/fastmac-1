@@ -30,13 +30,13 @@ jobs:
           echo "UMOUNT=$UMOUNT"
           # 找到对应的块设备（整盘，无分区 UDF 通常 /dev/diskN）
           DEV=$(hdiutil info -plist | python3 -c "
-import plistlib,sys
-d = plistlib.load(sys.stdin.buffer)
-for img in d.get('images',[]):
-    for ent in img.get('system-entities',[]):
-        if ent.get('mount-point') == '$UMOUNT':
-            print(ent.get('dev-entry',''))
-" 2>/dev/null)
+          import plistlib,sys
+          d = plistlib.load(sys.stdin.buffer)
+          for img in d.get('images',[]):
+              for ent in img.get('system-entities',[]):
+                  if ent.get('mount-point') == '$UMOUNT':
+                      print(ent.get('dev-entry',''))
+          " 2>/dev/null)
           echo "DEV=$DEV"
           echo "=== fsck_udf filesystem consistency check ==="
           fsck_udf -n "$DEV" 2>&1 | tail -8 || echo "(fsck_udf unavailable or non-udf device)"
