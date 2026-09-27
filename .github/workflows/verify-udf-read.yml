@@ -1,0 +1,60 @@
+name: Verify UDF full read integrity
+on:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: macos-14
+    timeout-minutes: 120
+    steps:
+      - name: Free up disk space
+        run: |
+          sudo rm -rf /Applications/Xcode.app || true
+          sudo rm -rf /Library/Developer/CommandLineTools || true
+          brew uninstall --force --ignore-dependencies $(brew list) 2>/dev/null || true
+          brew cleanup --prune=all || true
+          rm -rf ~/Library/Caches/* /tmp/* || true
+          df -h /
+      - name: Download UDF parts and merge
+        run: |
+          BASE="https://github.com/Zjr0118/fastmac-1/releases/download/sonoma-udf"
+          for i in aa ab ac ad ae af ag ah; do
+            curl -L -s -o upart-$i "$BASE/macos_sonoma_udf.iso.part-$i"
+          done
+          cat upart-* > macos_sonoma_udf.iso
+          rm -f upart-*
+          echo "=== merged ISO MD5 (compare with md5_udf.txt) ==="
+          md5 -q macos_sonoma_udf.iso
+      - name: Attach and raw-device full read check
+        run: |
+          UMOUNT=$(hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "UMOUNT=$UMOUNT"
+          # 找到对应的块设备（整盘，无分区 UDF 通常 /dev/diskN）
+          DEV=$(hdiutil info -plist | python3 -c "
+import plistlib,sys
+d = plistlib.load(sys.stdin.buffer)
+for img in d.get('images',[]):
+    for ent in img.get('system-entities',[]):
+        if ent.get('mount-point') == '$UMOUNT':
+            print(ent.get('dev-entry',''))
+" 2>/dev/null)
+          echo "DEV=$DEV"
+          echo "=== fsck_udf filesystem consistency check ==="
+          fsck_udf -n "$DEV" 2>&1 | tail -8 || echo "(fsck_udf unavailable or non-udf device)"
+          echo "=== full raw read + MD5 (simulates copy-phase full read) ==="
+          time dd if="$DEV" bs=1m 2>/dev/null | md5
+          echo "=== file MD5 reference ==="
+          md5 -q macos_sonoma_udf.iso
+      - name: Full-tree ditto copy (simulate installer copy phase)
+        run: |
+          UMOUNT=$(hdiutil attach macos_sonoma_udf.iso -readonly -nobrowse | awk -F'\t' '{print $NF}' | tail -1)
+          echo "source files: $(find "$UMOUNT" -type f | wc -l)"
+          echo "source symlinks: $(find "$UMOUNT" -type l | wc -l)"
+          ditto "$UMOUNT" /tmp/udf_copy 2>&1 | tail -3
+          echo "copy files: $(find /tmp/udf_copy -type f | wc -l)"
+          echo "copy symlinks: $(find /tmp/udf_copy -type l | wc -l)"
+          echo "=== big file dmg hash check (copy vs source) ==="
+          md5 -q "$UMOUNT/Install macOS Sonoma.app/Contents/SharedSupport/SharedSupport.dmg"
+          md5 -q "/tmp/udf_copy/Install macOS Sonoma.app/Contents/SharedSupport/SharedSupport.dmg"
+          echo "=== volume total bytes ==="
+          du -sk "$UMOUNT" | awk '{print "source KB: "$1}'
+          du -sk /tmp/udf_copy | awk '{print "copy KB: "$1}'
